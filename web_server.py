@@ -3,6 +3,7 @@ from flask_cors import CORS
 import threading
 import sys
 import os
+import requests
 
 # 获取当前文件所在目录
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +30,24 @@ def index():
 def get_dashboard_data():
     """获取仪表板数据"""
     try:
+        # 实时保证持仓有值：优先尝试真实持仓，否则回退到纸上持仓
+        pos = deepseekok2.web_data.get('current_position')
+        if not pos:
+            try:
+                pos = deepseekok2.get_current_position()
+            except Exception:
+                pos = None
+            if not pos:
+                try:
+                    pos = deepseekok2.compute_paper_position(deepseekok2.web_data.get('current_price'))
+                except Exception:
+                    pos = None
+            deepseekok2.web_data['current_position'] = pos
+
+        # 性能回填：使用未实现盈亏作为总盈亏，避免空值
+        if deepseekok2.web_data['current_position']:
+            deepseekok2.web_data['performance']['total_profit'] = deepseekok2.web_data['current_position'].get('unrealized_pnl', 0)
+
         data = {
             'account_info': deepseekok2.web_data['account_info'],
             'current_position': deepseekok2.web_data['current_position'],
@@ -50,7 +69,12 @@ def get_dashboard_data():
 def get_kline_data():
     """获取K线数据"""
     try:
-        return jsonify(deepseekok2.web_data['kline_data'])
+        return jsonify({
+            'data_source': deepseekok2.web_data.get('data_source'),
+            'is_fallback_data': deepseekok2.web_data.get('is_fallback_data', False),
+            'timeframe': deepseekok2.web_data.get('timeframe', deepseekok2.TRADE_CONFIG['timeframe']),
+            'kline_data': deepseekok2.web_data['kline_data']
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -123,6 +147,24 @@ def test_ai_connection():
     except Exception as e:
         return jsonify({'error': str(e), 'success': False}), 500
 
+@app.route('/api/health')
+def get_health():
+    """检查到交易所公共API的连通性"""
+    def check(url, timeout=5):
+        try:
+            resp = requests.get(url, timeout=timeout)
+            return {'reachable': True, 'status_code': resp.status_code}
+        except Exception as e:
+            return {'reachable': False, 'error': str(e)}
+
+    results = {
+        'okx_market': check('https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT-SWAP'),
+        'binance_futures': check('https://fapi.binance.com/fapi/v1/ping'),
+        'binance_spot': check('https://api.binance.com/api/v3/ping'),
+        'last_check': deepseekok2.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    return jsonify(results)
+
 def initialize_data():
     """启动时立即初始化一次数据"""
     try:
@@ -164,8 +206,22 @@ def initialize_data():
             
             # 更新基础数据
             deepseekok2.web_data['current_price'] = price_data['price']
-            deepseekok2.web_data['current_position'] = deepseekok2.get_current_position()
+            # 优先尝试真实持仓；若无，则回退到纸上持仓
+            pos = None
+            try:
+                pos = deepseekok2.get_current_position()
+            except Exception:
+                pos = None
+            if not pos:
+                try:
+                    pos = deepseekok2.compute_paper_position(price_data['price'])
+                except Exception:
+                    pos = None
+            deepseekok2.web_data['current_position'] = pos
             deepseekok2.web_data['kline_data'] = price_data['kline_data']
+            deepseekok2.web_data['data_source'] = price_data.get('data_source')
+            deepseekok2.web_data['is_fallback_data'] = price_data.get('is_fallback_data', False)
+            deepseekok2.web_data['timeframe'] = price_data.get('timeframe', deepseekok2.TRADE_CONFIG['timeframe'])
             deepseekok2.web_data['last_update'] = deepseekok2.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
             # 更新性能数据

@@ -33,9 +33,13 @@ def init_sqlite_database():
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
+        # 检查表是否存在，如果存在则删除重建
+        cursor.execute("DROP TABLE IF EXISTS trades")
+        cursor.execute("DROP TABLE IF EXISTS positions")
+        
         # 创建交易表
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS trades (
+            CREATE TABLE trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL,
                 side TEXT NOT NULL,
@@ -49,7 +53,7 @@ def init_sqlite_database():
         
         # 创建持仓表
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS positions (
+            CREATE TABLE positions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL,
                 side TEXT NOT NULL,

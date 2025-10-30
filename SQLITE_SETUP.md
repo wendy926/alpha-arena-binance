@@ -2,13 +2,28 @@
 
 ## 🚀 快速启动
 
-### 方法1: 一键修复脚本
+### 方法1: 完整安装（推荐）
+```bash
+chmod +x install_all_deps.sh
+./install_all_deps.sh
+python3 init_sqlite.py
+python3 web_server.py
+```
+
+### 方法2: 快速修复openai模块
+```bash
+chmod +x quick_fix_openai.sh
+./quick_fix_openai.sh
+python3 web_server.py
+```
+
+### 方法3: 一键修复脚本
 ```bash
 chmod +x fix_sqlite_and_deps.sh
 ./fix_sqlite_and_deps.sh
 ```
 
-### 方法2: 分步执行
+### 方法4: 分步执行
 ```bash
 # 1. 安装依赖
 chmod +x install_deps.sh
@@ -34,7 +49,11 @@ python3 web_server.py
 **原因**: 缺少Python依赖包
 **解决**: 运行 `./install_deps.sh` 安装依赖
 
-### 问题3: 权限问题
+### 问题3: `ModuleNotFoundError: No module named 'openai'`
+**原因**: 缺少openai模块
+**解决**: 运行 `./quick_fix_openai.sh` 或 `./install_all_deps.sh`
+
+### 问题4: 权限问题
 **解决**: 
 ```bash
 chmod +x *.sh

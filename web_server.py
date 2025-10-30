@@ -272,8 +272,8 @@ if __name__ == '__main__':
     bot_thread = threading.Thread(target=run_trading_bot, daemon=True)
     bot_thread.start()
     
-    # 启动Web服务器
-    PORT = 8080  # 使用8080端口避免冲突
+    # 启动Web服务器 - 优先使用环境变量PORT，否则使用默认8080
+    PORT = int(os.environ.get('PORT', 8080))
     print("\n" + "="*60)
     print("🌐 Web管理界面启动成功！")
     print(f"📊 访问地址: http://localhost:{PORT}")

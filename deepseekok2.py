@@ -1,7 +1,15 @@
 import os
 import time
 import schedule
-from openai import OpenAI
+
+# 可选导入openai，避免版本兼容问题
+try:
+    from openai import OpenAI
+    _OPENAI_AVAILABLE = True
+except ImportError as e:
+    print(f"警告: openai不可用，AI功能将被禁用: {e}")
+    OpenAI = None
+    _OPENAI_AVAILABLE = False
 """
 为兼容本地较低版本Python环境（如3.7）无法正常导入ccxt的情况，
 将ccxt作为可选依赖处理：导入失败时设置为None，并在运行时回退到本地模拟数据。
@@ -35,25 +43,32 @@ from paper_trading import (
 # 支持DeepSeek和阿里百炼Qwen
 AI_PROVIDER = os.getenv('AI_PROVIDER', 'deepseek').lower()  # 'deepseek' 或 'qwen'
 
-if AI_PROVIDER == 'qwen':
-    # 阿里百炼Qwen客户端
-    ai_client = OpenAI(
-        api_key=os.getenv('DASHSCOPE_API_KEY'),
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
-    )
-    AI_MODEL = "qwen-max"
-    print(f"使用AI模型: 阿里百炼 {AI_MODEL}")
+if _OPENAI_AVAILABLE and OpenAI:
+    if AI_PROVIDER == 'qwen':
+        # 阿里百炼Qwen客户端
+        ai_client = OpenAI(
+            api_key=os.getenv('DASHSCOPE_API_KEY'),
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+        )
+        AI_MODEL = "qwen-max"
+        print(f"使用AI模型: 阿里百炼 {AI_MODEL}")
+    else:
+        # DeepSeek客户端（默认）
+        ai_client = OpenAI(
+            api_key=os.getenv('DEEPSEEK_API_KEY'),
+            base_url="https://api.deepseek.com"
+        )
+        AI_MODEL = "deepseek-chat"
+        print(f"使用AI模型: DeepSeek {AI_MODEL}")
+    
+    # 保持向后兼容
+    deepseek_client = ai_client
 else:
-    # DeepSeek客户端（默认）
-    ai_client = OpenAI(
-        api_key=os.getenv('DEEPSEEK_API_KEY'),
-        base_url="https://api.deepseek.com"
-    )
-    AI_MODEL = "deepseek-chat"
-    print(f"使用AI模型: DeepSeek {AI_MODEL}")
-
-# 保持向后兼容
-deepseek_client = ai_client
+    print("⚠️ OpenAI不可用，AI功能将被禁用")
+    ai_client = None
+    deepseek_client = None
+    AI_MODEL = "disabled"
+    AI_PROVIDER = "none"
 
 # 初始化 Binance USDT-M 永续合约交易所（延迟创建，避免本地无ccxt时报错）
 exchange = None
@@ -1091,6 +1106,14 @@ def check_stop_take_profit(current_price):
 def test_ai_connection():
     """测试AI模型连接状态"""
     global web_data
+    
+    if not _OPENAI_AVAILABLE or ai_client is None:
+        web_data['ai_model_info']['status'] = 'disabled'
+        web_data['ai_model_info']['last_check'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        web_data['ai_model_info']['error_message'] = 'OpenAI模块不可用'
+        print("⚠️ AI功能已禁用，跳过连接测试")
+        return False
+    
     try:
         print(f"🔍 测试 {AI_PROVIDER.upper()} 连接...")
         response = ai_client.chat.completions.create(
@@ -1226,6 +1249,27 @@ def analyze_with_deepseek(price_data):
     # 使用结构化Prompt覆盖
     last_signal = signal_history[-1] if signal_history else None
     prompt = build_ai_prompt(price_data, last_signal=last_signal, sentiment_data=sentiment_data, current_pos=current_pos)
+
+    # 检查AI是否可用
+    if not _OPENAI_AVAILABLE or ai_client is None:
+        print("⚠️ AI功能不可用，返回默认HOLD信号")
+        fallback_decision = {
+            'signal': 'HOLD',
+            'reason': 'AI功能不可用，保持当前状态',
+            'confidence': 'LOW',
+            'stop_loss': None,
+            'take_profit': None,
+            'strategy_tag': 'fallback',
+            'time_horizon': 'short',
+            'risk_budget': 0.01
+        }
+        
+        # 更新AI状态
+        web_data['ai_model_info']['status'] = 'disabled'
+        web_data['ai_model_info']['last_check'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        web_data['ai_model_info']['error_message'] = 'OpenAI模块不可用'
+        
+        return fallback_decision
 
     try:
         print(f"⏳ 正在调用{AI_PROVIDER.upper()} API ({AI_MODEL})...")

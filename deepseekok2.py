@@ -21,7 +21,15 @@ import json
 import requests
 from datetime import datetime, timedelta
 load_dotenv()
-from paper_trading import record_trade, get_last_trade, get_last_open_trade
+from paper_trading import (
+    init_db,
+    record_trade,
+    get_last_trade,
+    get_last_open_trade,
+    list_trades,
+    get_all_trades,
+    compute_win_rate_from_db,
+)
 
 # 初始化AI客户端
 # 支持DeepSeek和阿里百炼Qwen
@@ -62,7 +70,11 @@ TRADE_CONFIG = {
         'short_term': 20,  # 短期均线
         'medium_term': 50,  # 中期均线
         'long_term': 96  # 长期趋势
-    }
+    },
+    # 执行门槛与防频繁交易参数
+    'min_confidence_for_trade': 'MEDIUM',  # 低于该信心不执行
+    'signal_cooldown_minutes': 15,         # 信号冷却时间，避免频繁开仓
+    'require_signal_confirmation': True    # 首次建仓需近3次里至少2次相同信号
 }
 
 # 全局变量存储历史数据
@@ -334,6 +346,45 @@ def get_market_trend(df):
         return {}
 
 
+def get_real_btc_price():
+    """获取实时BTC价格，用于fallback数据"""
+    try:
+        # 尝试从多个公共API获取实时BTC价格
+        apis = [
+            "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
+            "https://api.coinbase.com/v2/exchange-rates?currency=BTC",
+            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+        ]
+        
+        for api_url in apis:
+            try:
+                response = requests.get(api_url, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    if "binance" in api_url:
+                        price = float(data['price'])
+                        print(f"✅ 从Binance获取实时BTC价格: ${price:,.2f}")
+                        return price
+                    elif "coinbase" in api_url:
+                        price = float(data['data']['rates']['USD'])
+                        print(f"✅ 从Coinbase获取实时BTC价格: ${price:,.2f}")
+                        return price
+                    elif "coingecko" in api_url:
+                        price = float(data['bitcoin']['usd'])
+                        print(f"✅ 从CoinGecko获取实时BTC价格: ${price:,.2f}")
+                        return price
+            except Exception as e:
+                print(f"⚠️ API {api_url} 失败: {e}")
+                continue
+                
+        print("⚠️ 所有价格API都失败，使用默认价格")
+        return 68000  # 最后的备用价格
+        
+    except Exception as e:
+        print(f"⚠️ 获取实时价格失败: {e}")
+        return 68000
+
 def generate_fallback_ohlcv_data():
     """生成fallback OHLCV数据，用于网络连接失败时"""
     import random
@@ -341,8 +392,8 @@ def generate_fallback_ohlcv_data():
     
     print("🔄 网络连接失败，使用本地模拟数据...")
     
-    # 基础价格（模拟BTC价格）
-    base_price = 68000
+    # 获取实时BTC价格作为基础价格
+    base_price = get_real_btc_price()
     data_points = TRADE_CONFIG['data_points']
     
     # 生成时间序列
@@ -625,6 +676,90 @@ def generate_technical_analysis_text(price_data):
     - 静态支撑: {safe_float(levels.get('static_support', 0)):.2f}
     """
     return analysis_text
+
+def build_ai_prompt(price_data, last_signal=None, sentiment_data=None, current_pos=None):
+    """构建更结构化的AI Prompt，参考AI-Trader风格并结合本项目数据。"""
+    tf = TRADE_CONFIG['timeframe']
+    # K线摘要（最近5根）
+    kline_text = f"【最近5根{tf}K线】\n"
+    try:
+        for i, k in enumerate(price_data.get('kline_data', [])[-5:]):
+            trend = "阳线" if (k.get('close', 0) > k.get('open', 0)) else "阴线"
+            change = 0.0
+            if k.get('open', 0):
+                change = ((k['close'] - k['open']) / k['open']) * 100
+            kline_text += f"K{i+1}: {trend} 开:{k.get('open',0):.2f} 收:{k.get('close',0):.2f} 涨跌:{change:+.2f}%\n"
+    except Exception:
+        kline_text += "(K线数据不可用)\n"
+
+    # 技术分析文本
+    technical_analysis = generate_technical_analysis_text(price_data)
+
+    # 上次信号
+    signal_text = ""
+    if last_signal:
+        signal_text = f"【上次信号】{last_signal.get('signal','N/A')} / {last_signal.get('confidence','N/A')}"
+
+    # 情绪文本
+    if sentiment_data:
+        sign = '+' if sentiment_data.get('net_sentiment', 0) >= 0 else ''
+        sentiment_text = f"【市场情绪】乐观{sentiment_data.get('positive_ratio',0):.1%} 悲观{sentiment_data.get('negative_ratio',0):.1%} 净值{sign}{sentiment_data.get('net_sentiment',0):.3f}"
+    else:
+        sentiment_text = "【市场情绪】数据暂不可用"
+
+    # 持仓文本
+    if current_pos:
+        position_text = f"{current_pos.get('side')}仓, 数量:{current_pos.get('size')} 盈亏:{current_pos.get('unrealized_pnl',0):.2f}USDT"
+        pnl_text = f", 持仓盈亏:{current_pos.get('unrealized_pnl',0):.2f} USDT"
+    else:
+        position_text = "无持仓"
+        pnl_text = ""
+
+    # 组合Prompt（严格的结构与输出要求）
+    prompt = f"""
+[角色]
+你是专业量化交易AI，专注{tf}周期的趋势与风险控制。
+
+[输入数据]
+{kline_text}
+{technical_analysis}
+{signal_text}
+{sentiment_text}
+
+[当前行情]
+- 当前价格: ${price_data.get('price',0):,.2f}
+- 时间: {price_data.get('timestamp','')}
+- 当根最高/最低: {price_data.get('high',0):.2f} / {price_data.get('low',0):.2f}
+- 成交量: {price_data.get('volume',0):.2f}
+- 价格变化: {price_data.get('price_change',0):+.2f}%
+- 当前持仓: {position_text}{pnl_text}
+
+[思考标准]
+1. 趋势持续性优先：避免因单根K线改变整体判断。
+2. 反转需多指标共振：至少2~3项技术指标同向确认再反转。
+3. 情绪仅作辅助：与技术同向增强信心；背离以技术为主。
+4. 风险明确：给出合理止损/止盈，方向与多空逻辑一致。
+5. 防频繁交易：若无明确趋势，输出HOLD。
+
+[输出格式]
+仅输出一个JSON对象（不含任何额外文字或注释）：
+{{
+  "signal": "BUY|SELL|HOLD",
+  "reason": "简要分析理由(趋势、关键位、指标共振)",
+  "stop_loss": <number>,
+  "take_profit": <number>,
+  "confidence": "HIGH|MEDIUM|LOW",
+  "strategy_tag": "trend_follow|mean_reversion|breakout|other",
+  "time_horizon": "scalp|intraday|swing",
+  "risk_budget": "low|medium|high"
+}}
+
+[校验规则]
+- 多头：stop_loss < 当前价 < take_profit。
+- 空头：take_profit < 当前价 < stop_loss。
+- HOLD时给出中性理由，止损/止盈可贴近当前价或留空。
+"""
+    return prompt
 
 
 def get_current_position():
@@ -1000,6 +1135,59 @@ def create_fallback_signal(price_data):
     }
 
 
+def should_execute_trade(signal_data, current_position):
+    """执行门槛判断：冷却时间、最小信心、首次确认。
+    - HOLD 信号不执行
+    - 低于最小信心阈值不执行
+    - 距离最近开仓未超过冷却期不执行
+    - 首次建仓需近3次里至少2次相同信号
+    """
+    try:
+        signal = (signal_data.get('signal') or 'HOLD').upper()
+        confidence = (signal_data.get('confidence') or 'LOW').upper()
+
+        if signal == 'HOLD':
+            return False
+
+        # 最小信心阈值
+        lvl = {'LOW': 0, 'MEDIUM': 1, 'HIGH': 2}
+        min_conf = (TRADE_CONFIG.get('min_confidence_for_trade', 'MEDIUM') or 'MEDIUM').upper()
+        if lvl.get(confidence, 0) < lvl.get(min_conf, 1):
+            print(f"🚫 信心不足：{confidence} < {min_conf}")
+            return False
+
+        # 信号冷却时间（按最近一次开仓时间）
+        cooldown_min = int(TRADE_CONFIG.get('signal_cooldown_minutes', 0) or 0)
+        if cooldown_min > 0:
+            last_open_dt = None
+            for t in reversed(web_data.get('trade_history', [])):
+                if t.get('action') in ('open_long', 'open_short'):
+                    ts = t.get('timestamp')
+                    try:
+                        last_open_dt = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S')
+                    except Exception:
+                        last_open_dt = None
+                    break
+            if last_open_dt:
+                if datetime.now() - last_open_dt < timedelta(minutes=cooldown_min):
+                    print(f"⏱️ 冷却中：距上次开仓未满{cooldown_min}分钟")
+                    return False
+
+        # 首次建仓确认：最近3次中至少2次同向
+        if TRADE_CONFIG.get('require_signal_confirmation', False):
+            if not current_position and signal in ('BUY', 'SELL'):
+                last_three = [s.get('signal') for s in signal_history[-3:]]
+                same_count = last_three.count(signal)
+                if same_count < 2:
+                    print("🧯 首次建仓确认未满足：近3次里同向不足2次")
+                    return False
+
+        return True
+    except Exception as e:
+        print(f"执行门槛判断异常：{e}")
+        return True  # 失败时不阻断，避免影响主流程
+
+
 def analyze_with_deepseek(price_data):
     """使用DeepSeek分析市场并生成交易信号（增强版）"""
 
@@ -1035,67 +1223,9 @@ def analyze_with_deepseek(price_data):
     position_text = "无持仓" if not current_pos else f"{current_pos['side']}仓, 数量: {current_pos['size']}, 盈亏: {current_pos['unrealized_pnl']:.2f}USDT"
     pnl_text = f", 持仓盈亏: {current_pos['unrealized_pnl']:.2f} USDT" if current_pos else ""
 
-    prompt = f"""
-    你是一个专业的加密货币交易分析师。请基于以下BTC/USDT {TRADE_CONFIG['timeframe']}周期数据进行分析：
-
-    {kline_text}
-
-    {technical_analysis}
-
-    {signal_text}
-
-    {sentiment_text}  # 添加情绪分析
-
-    【当前行情】
-    - 当前价格: ${price_data['price']:,.2f}
-    - 时间: {price_data['timestamp']}
-    - 本K线最高: ${price_data['high']:,.2f}
-    - 本K线最低: ${price_data['low']:,.2f}
-    - 本K线成交量: {price_data['volume']:.2f} BTC
-    - 价格变化: {price_data['price_change']:+.2f}%
-    - 当前持仓: {position_text}{pnl_text}
-
-    【防频繁交易重要原则】
-    1. **趋势持续性优先**: 不要因单根K线或短期波动改变整体趋势判断
-    2. **持仓稳定性**: 除非趋势明确强烈反转，否则保持现有持仓方向
-    3. **反转确认**: 需要至少2-3个技术指标同时确认趋势反转才改变信号
-    4. **成本意识**: 减少不必要的仓位调整，每次交易都有成本
-
-    【交易指导原则 - 必须遵守】
-    1. **技术分析主导** (权重60%)：趋势、支撑阻力、K线形态是主要依据
-    2. **市场情绪辅助** (权重30%)：情绪数据用于验证技术信号，不能单独作为交易理由  
-    - 情绪与技术同向 → 增强信号信心
-    - 情绪与技术背离 → 以技术分析为主，情绪仅作参考
-    - 情绪数据延迟 → 降低权重，以实时技术指标为准
-    3. **风险管理** (权重10%)：考虑持仓、盈亏状况和止损位置
-    4. **趋势跟随**: 明确趋势出现时立即行动，不要过度等待
-    5. 因为做的是btc，做多权重可以大一点点
-    6. **信号明确性**:
-    - 强势上涨趋势 → BUY信号
-    - 强势下跌趋势 → SELL信号  
-    - 仅在窄幅震荡、无明确方向时 → HOLD信号
-    7. **技术指标权重**:
-    - 趋势(均线排列) > RSI > MACD > 布林带
-    - 价格突破关键支撑/阻力位是重要信号
-
-    【当前技术状况分析】
-    - 整体趋势: {price_data['trend_analysis'].get('overall', 'N/A')}
-    - 短期趋势: {price_data['trend_analysis'].get('short_term', 'N/A')} 
-    - RSI状态: {price_data['technical_data'].get('rsi', 0):.1f} ({'超买' if price_data['technical_data'].get('rsi', 0) > 70 else '超卖' if price_data['technical_data'].get('rsi', 0) < 30 else '中性'})
-    - MACD方向: {price_data['trend_analysis'].get('macd', 'N/A')}
-
-    【分析要求】
-    基于以上分析，请给出明确的交易信号
-
-    请用以下JSON格式回复：
-    {{
-        "signal": "BUY|SELL|HOLD",
-        "reason": "简要分析理由(包含趋势判断和技术依据)",
-        "stop_loss": 具体价格,
-        "take_profit": 具体价格, 
-        "confidence": "HIGH|MEDIUM|LOW"
-    }}
-    """
+    # 使用结构化Prompt覆盖
+    last_signal = signal_history[-1] if signal_history else None
+    prompt = build_ai_prompt(price_data, last_signal=last_signal, sentiment_data=sentiment_data, current_pos=current_pos)
 
     try:
         print(f"⏳ 正在调用{AI_PROVIDER.upper()} API ({AI_MODEL})...")
@@ -1103,7 +1233,12 @@ def analyze_with_deepseek(price_data):
             model=AI_MODEL,
             messages=[
                 {"role": "system",
-                 "content": f"您是一位专业的交易员，专注于{TRADE_CONFIG['timeframe']}周期趋势分析。请结合K线形态和技术指标做出判断，并严格遵循JSON格式要求。"},
+                 "content": (
+                     "你是专业量化交易AI。严格依据提供数据进行分析，"
+                     "只输出一个JSON对象（不含任何额外文字），"
+                     "键包括signal、reason、stop_loss、take_profit、confidence、strategy_tag、time_horizon、risk_budget。"
+                     "遵守止损/止盈方向一致性与防频繁交易的原则。"
+                 )},
                 {"role": "user", "content": prompt}
             ],
             stream=False,
@@ -1192,6 +1327,10 @@ def execute_trade(signal_data, price_data):
     global position, web_data
 
     current_position = get_current_position()
+    # 执行门槛：冷却、最小信心、首次确认
+    if not should_execute_trade(signal_data, current_position):
+        print("⏸ 信号未达执行条件（冷却/信心/确认），跳过下单")
+        return
 
     # 🔴 紧急修复：防止频繁反转
     if current_position and signal_data['signal'] != 'HOLD':
@@ -1230,6 +1369,36 @@ def execute_trade(signal_data, price_data):
     # 模拟交易：不执行真实下单，只记录数据库
     if os.getenv('PAPER_TRADING', 'true').lower() == 'true' or TRADE_CONFIG.get('test_mode', False):
         try:
+            # 若存在持仓且新信号与当前方向相反，先记录平仓
+            if current_position and signal_data['signal'] in ('BUY', 'SELL'):
+                curr_side = current_position.get('side')
+                if curr_side in ('long', 'short'):
+                    close_action = 'close_long' if curr_side == 'long' else 'close_short'
+                    close_signal = 'SELL' if curr_side == 'long' else 'BUY'
+                    close_amount = to_float(current_position.get('size'), TRADE_CONFIG['amount'])
+                    close_sd = {
+                        'signal': close_signal,
+                        'confidence': 'HIGH',
+                        'reason': 'reversal_close',
+                        'stop_loss': _stop_loss,
+                        'take_profit': _take_profit
+                    }
+                    record_trade(close_sd, price_data, close_action, close_amount)
+                    web_data['trade_history'].append({
+                        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'symbol': TRADE_CONFIG['symbol'],
+                        'timeframe': TRADE_CONFIG['timeframe'],
+                        'signal': close_signal,
+                        'action': close_action,
+                        'amount': close_amount,
+                        'price': price_data.get('price', 0),
+                        'stop_loss': _stop_loss,
+                        'take_profit': _take_profit,
+                        'confidence': 'HIGH',
+                        'reason': 'reversal_close'
+                    })
+
+            # 记录开仓（BUY→open_long，SELL→open_short）
             action = {'BUY': 'open_long', 'SELL': 'open_short'}.get(signal_data['signal'], 'hold')
             # 写入数据库前也保证数值字段为浮点数
             signal_data['stop_loss'] = _stop_loss
@@ -1249,9 +1418,13 @@ def execute_trade(signal_data, price_data):
                 'confidence': signal_data['confidence'],
                 'reason': signal_data['reason']
             })
-            # 更新胜率统计（基于交易方向反转视为平仓）
+
+            # 从数据库更新胜率与交易次数
             try:
-                compute_win_rate_from_history()
+                stats = compute_win_rate_from_db()
+                web_data['performance']['win_rate'] = stats.get('win_rate', 0)
+                web_data['performance']['total_trades'] = stats.get('total_trades', 0)
+                web_data['performance']['total_profit'] = stats.get('total_profit', 0.0)
             except Exception as e_stats:
                 print(f"更新胜率统计失败: {e_stats}")
             # 更新纸上持仓以便前端显示

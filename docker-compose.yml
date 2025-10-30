@@ -1,6 +1,26 @@
 version: '3.8'
 
 services:
+  mysql:
+    image: mysql:8.0
+    container_name: alpha-arena-mysql
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=alpha_root_2025
+      - MYSQL_DATABASE=alpha_arena
+      - MYSQL_USER=alpha
+      - MYSQL_PASSWORD=alpha_pwd_2025
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 20s
+      timeout: 10s
+      retries: 6
+      start_period: 20s
+
   btc-trading-bot:
     build:
       context: .
@@ -16,6 +36,16 @@ services:
       - ./data:/app/data
     environment:
       - TZ=Asia/Shanghai
+      - PAPER_TRADING=true
+      - DB_TYPE=mysql
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=alpha
+      - MYSQL_PASSWORD=alpha_pwd_2025
+      - MYSQL_DB=alpha_arena
+    depends_on:
+      mysql:
+        condition: service_healthy
     # 资源限制（可选）
     deploy:
       resources:

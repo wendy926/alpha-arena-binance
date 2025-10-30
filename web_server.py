@@ -10,7 +10,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # 导入主程序
 import deepseekok2
-from paper_trading import init_db
+from paper_trading import init_db, list_trades, compute_win_rate_from_db
 
 # 明确指定模板和静态文件路径
 app = Flask(__name__, 
@@ -48,9 +48,12 @@ def get_dashboard_data():
         if deepseekok2.web_data['current_position']:
             deepseekok2.web_data['performance']['total_profit'] = deepseekok2.web_data['current_position'].get('unrealized_pnl', 0)
 
-        # 计算胜率与交易次数（基于交易反转视为平仓）
+        # 计算胜率与交易次数（基于数据库记录）
         try:
-            deepseekok2.compute_win_rate_from_history()
+            stats = compute_win_rate_from_db()
+            deepseekok2.web_data['performance']['win_rate'] = stats.get('win_rate', 0.0)
+            deepseekok2.web_data['performance']['total_trades'] = stats.get('total_trades', 0)
+            deepseekok2.web_data['performance']['total_profit'] = stats.get('total_profit', 0.0)
         except Exception as e_stats:
             print(f"计算胜率失败: {e_stats}")
 
@@ -88,7 +91,14 @@ def get_kline_data():
 def get_trade_history():
     """获取交易历史"""
     try:
-        return jsonify(deepseekok2.web_data['trade_history'])
+        # 优先从数据库返回最近交易列表
+        trades = []
+        try:
+            trades = list_trades(limit=100)
+        except Exception as e_db:
+            print(f"读取数据库交易失败，回退到内存: {e_db}")
+            trades = deepseekok2.web_data['trade_history']
+        return jsonify(trades)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

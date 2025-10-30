@@ -159,7 +159,7 @@ async function updateDashboard() {
         const winRateVal = data.performance?.win_rate;
         document.getElementById('winRate').textContent =
             (winRateVal !== undefined && winRateVal !== null)
-                ? `${Number(winRateVal).toFixed(1)}%`
+                ? `${Number(winRateVal).toFixed(1)}%`  // 后端已返回百分比值
                 : '--';
         document.getElementById('totalTrades').textContent = 
             data.performance?.total_trades || '0';

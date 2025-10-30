@@ -7,13 +7,20 @@ echo "=" * 50
 cd "$(dirname "$0")"
 
 echo "步骤1: 安装Python依赖..."
-pip3 install flask flask-cors requests pymysql
+# 完整的依赖列表
+DEPS="ccxt openai pandas schedule python-dotenv requests urllib3 flask flask-cors pymysql"
+pip3 install $DEPS
 
 if [ $? -eq 0 ]; then
     echo "✅ Python依赖安装成功"
 else
     echo "❌ Python依赖安装失败，尝试使用pip..."
-    pip install flask flask-cors requests pymysql
+    pip install $DEPS
+    if [ $? -ne 0 ]; then
+        echo "⚠️ 尝试安装关键依赖..."
+        CRITICAL_DEPS="flask flask-cors requests schedule python-dotenv"
+        pip3 install $CRITICAL_DEPS || pip install $CRITICAL_DEPS
+    fi
 fi
 
 echo ""

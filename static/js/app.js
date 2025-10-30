@@ -156,8 +156,11 @@ async function updateDashboard() {
             totalProfitEl.className = `value pnl ${data.performance.total_profit >= 0 ? 'positive' : 'negative'}`;
         }
         
-        document.getElementById('winRate').textContent = 
-            data.performance?.win_rate ? `${data.performance.win_rate.toFixed(1)}%` : '--';
+        const winRateVal = data.performance?.win_rate;
+        document.getElementById('winRate').textContent =
+            (winRateVal !== undefined && winRateVal !== null)
+                ? `${Number(winRateVal).toFixed(1)}%`
+                : '--';
         document.getElementById('totalTrades').textContent = 
             data.performance?.total_trades || '0';
         

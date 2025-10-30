@@ -48,6 +48,12 @@ def get_dashboard_data():
         if deepseekok2.web_data['current_position']:
             deepseekok2.web_data['performance']['total_profit'] = deepseekok2.web_data['current_position'].get('unrealized_pnl', 0)
 
+        # 计算胜率与交易次数（基于交易反转视为平仓）
+        try:
+            deepseekok2.compute_win_rate_from_history()
+        except Exception as e_stats:
+            print(f"计算胜率失败: {e_stats}")
+
         data = {
             'account_info': deepseekok2.web_data['account_info'],
             'current_position': deepseekok2.web_data['current_position'],

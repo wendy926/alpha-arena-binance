@@ -668,15 +668,38 @@ def get_current_position():
 def compute_paper_position(current_price=None):
     """基于纸上交易记录推导当前持仓（用于无交易所/测试模式）"""
     try:
-        # 选择最近一次开仓记录（忽略HOLD）
-        last = get_last_open_trade() or get_last_trade()
-        if not last:
-            return None
-        action = last.get('action')
-        if action not in ('open_long', 'open_short'):
-            return None
-        entry_price = to_float(last.get('price'), 0.0)
-        amount = to_float(last.get('amount'), 0.0)
+        # 优先使用内存中的交易历史来判断是否已平仓
+        history = web_data.get('trade_history', [])
+        last_open = None
+        last_open_idx = None
+        for idx in range(len(history) - 1, -1, -1):
+            act = (history[idx] or {}).get('action')
+            if act in ('open_long', 'open_short'):
+                last_open = history[idx]
+                last_open_idx = idx
+                break
+        if last_open is None:
+            # 回退到数据库最近开仓/交易
+            last = get_last_open_trade() or get_last_trade()
+            if not last or last.get('action') not in ('open_long', 'open_short'):
+                return None
+            last_open = last
+            last_open_idx = None
+
+        # 如果在最近开仓之后存在 close_* 或 再次 open_*（反转），则视为已平仓
+        if last_open_idx is not None:
+            closed = False
+            for j in range(last_open_idx + 1, len(history)):
+                aj = (history[j] or {}).get('action')
+                if aj in ('close_long', 'close_short', 'open_long', 'open_short'):
+                    closed = True
+                    break
+            if closed:
+                return None
+
+        action = last_open.get('action')
+        entry_price = to_float(last_open.get('price'), 0.0)
+        amount = to_float(last_open.get('amount'), 0.0)
         if amount <= 0 or entry_price <= 0:
             return None
         cur_price = to_float(current_price if current_price is not None else web_data.get('current_price', entry_price), entry_price)
@@ -748,6 +771,186 @@ def to_float(value, default=0.0):
         return default
     except Exception:
         return default
+
+
+def compute_win_rate_from_history():
+    """从内存中的 trade_history 计算胜率和已完成交易数。
+    规则：
+    - 将方向反转（open_long -> open_short 或 open_short -> open_long）视为上一次持仓的平仓事件；
+    - 将显式的 close_long/close_short 视为平仓事件。
+      盈亏计算：
+        long 平仓盈亏 = 出场价 - 入场价
+        short 平仓盈亏 = 入场价 - 出场价
+    """
+    try:
+        history = web_data.get('trade_history', [])
+        if not history:
+            web_data['performance']['total_trades'] = 0
+            web_data['performance']['win_rate'] = 0.0
+            return
+
+        total = 0
+        wins = 0
+        current_open = None  # {'side': 'long'|'short', 'entry_price': float, 'amount': float}
+
+        for rec in history:
+            action = rec.get('action') or ''
+            price = to_float(rec.get('price'), None)
+            amount = to_float(rec.get('amount'), None)
+
+            if action == 'open_long':
+                if current_open is None:
+                    current_open = {'side': 'long', 'entry_price': price, 'amount': amount}
+                elif current_open.get('side') == 'short' and price is not None and current_open.get('entry_price') is not None and current_open.get('amount'):
+                    # 平空仓：入场价 - 出场价
+                    pnl = (current_open['entry_price'] - price) * current_open['amount']
+                    total += 1
+                    if pnl > 0:
+                        wins += 1
+                    # 反转后开多
+                    current_open = {'side': 'long', 'entry_price': price, 'amount': amount}
+                else:
+                    # 同向重复开仓记录，忽略
+                    pass
+            elif action == 'open_short':
+                if current_open is None:
+                    current_open = {'side': 'short', 'entry_price': price, 'amount': amount}
+                elif current_open.get('side') == 'long' and price is not None and current_open.get('entry_price') is not None and current_open.get('amount'):
+                    # 平多仓：出场价 - 入场价
+                    pnl = (price - current_open['entry_price']) * current_open['amount']
+                    total += 1
+                    if pnl > 0:
+                        wins += 1
+                    # 反转后开空
+                    current_open = {'side': 'short', 'entry_price': price, 'amount': amount}
+                else:
+                    # 同向重复开仓记录，忽略
+                    pass
+            elif action == 'close_long':
+                # 仅当当前持仓为long时有效
+                if current_open and current_open.get('side') == 'long' and price is not None and current_open.get('entry_price') is not None and current_open.get('amount'):
+                    pnl = (price - current_open['entry_price']) * current_open['amount']
+                    total += 1
+                    if pnl > 0:
+                        wins += 1
+                    current_open = None
+            elif action == 'close_short':
+                # 仅当当前持仓为short时有效
+                if current_open and current_open.get('side') == 'short' and price is not None and current_open.get('entry_price') is not None and current_open.get('amount'):
+                    pnl = (current_open['entry_price'] - price) * current_open['amount']
+                    total += 1
+                    if pnl > 0:
+                        wins += 1
+                    current_open = None
+            else:
+                # HOLD或未知动作，忽略
+                pass
+
+        web_data['performance']['total_trades'] = total
+        web_data['performance']['win_rate'] = (wins / total * 100.0) if total > 0 else 0.0
+    except Exception as e:
+        print(f"计算胜率失败: {e}")
+        # 避免前端显示空
+        web_data['performance']['total_trades'] = web_data['performance'].get('total_trades', 0) or 0
+        web_data['performance']['win_rate'] = web_data['performance'].get('win_rate', 0.0) or 0.0
+
+
+def check_stop_take_profit(current_price):
+    """检查最近一次开仓是否触发止损/止盈，触发则记录平仓事件并更新统计。
+    仅在模拟/测试模式下执行自动平仓。
+    """
+    try:
+        if not (os.getenv('PAPER_TRADING', 'true').lower() == 'true' or TRADE_CONFIG.get('test_mode', False)):
+            return False
+
+        last = get_last_open_trade()
+        if not last or last.get('action') not in ('open_long', 'open_short'):
+            return False
+
+        side = 'long' if last['action'] == 'open_long' else 'short'
+        sl = to_float(last.get('stop_loss'), None)
+        tp = to_float(last.get('take_profit'), None)
+        entry = to_float(last.get('price'), None)
+        amount = to_float(last.get('amount'), None)
+        price = to_float(current_price, None)
+
+        if None in (sl, tp, entry, amount, price):
+            return False
+
+        triggered = None
+        close_action = None
+        close_signal = None
+        if side == 'long':
+            if price <= sl:
+                triggered = '止损触发'
+                close_action = 'close_long'
+                close_signal = 'SELL'
+            elif price >= tp:
+                triggered = '止盈触发'
+                close_action = 'close_long'
+                close_signal = 'SELL'
+        else:  # short
+            if price >= sl:
+                triggered = '止损触发'
+                close_action = 'close_short'
+                close_signal = 'BUY'
+            elif price <= tp:
+                triggered = '止盈触发'
+                close_action = 'close_short'
+                close_signal = 'BUY'
+
+        if not triggered:
+            return False
+
+        # 记录到数据库
+        signal_data = {
+            'signal': close_signal,
+            'confidence': 'HIGH',
+            'reason': triggered,
+            'stop_loss': sl,
+            'take_profit': tp
+        }
+        price_data = {
+            'price': price,
+            'symbol': TRADE_CONFIG['symbol'],
+            'timeframe': TRADE_CONFIG['timeframe'],
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        try:
+            record_trade(signal_data, price_data, close_action, amount)
+        except Exception as e_db:
+            print(f"记录平仓到数据库失败: {e_db}")
+
+        # 记录到内存历史
+        web_data['trade_history'].append({
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'symbol': TRADE_CONFIG['symbol'],
+            'timeframe': TRADE_CONFIG['timeframe'],
+            'signal': close_signal,
+            'action': close_action,
+            'amount': amount,
+            'price': price,
+            'stop_loss': sl,
+            'take_profit': tp,
+            'confidence': 'HIGH',
+            'reason': triggered
+        })
+        if len(web_data['trade_history']) > 100:
+            web_data['trade_history'].pop(0)
+
+        # 更新胜率统计
+        try:
+            compute_win_rate_from_history()
+        except Exception as e_stats:
+            print(f"更新胜率统计失败: {e_stats}")
+
+        # 清除纸上持仓（视为已平仓）
+        web_data['current_position'] = None
+        print(f"✅ {triggered}，已执行{close_action} @ ${price:,.2f}")
+        return True
+    except Exception as e:
+        print(f"检查止盈止损失败: {e}")
+        return False
 
 
 def test_ai_connection():
@@ -1046,6 +1249,11 @@ def execute_trade(signal_data, price_data):
                 'confidence': signal_data['confidence'],
                 'reason': signal_data['reason']
             })
+            # 更新胜率统计（基于交易方向反转视为平仓）
+            try:
+                compute_win_rate_from_history()
+            except Exception as e_stats:
+                print(f"更新胜率统计失败: {e_stats}")
             # 更新纸上持仓以便前端显示
             try:
                 web_data['current_position'] = compute_paper_position(price_data.get('price'))
@@ -1150,6 +1358,11 @@ def execute_trade(signal_data, price_data):
         web_data['trade_history'].append(trade_record)
         if len(web_data['trade_history']) > 100:  # 只保留最近100条
             web_data['trade_history'].pop(0)
+        # 更新胜率统计（基于交易方向反转视为平仓）
+        try:
+            compute_win_rate_from_history()
+        except Exception as e_stats:
+            print(f"更新胜率统计失败: {e_stats}")
 
     except Exception as e:
         print(f"订单执行失败: {e}")
@@ -1306,6 +1519,11 @@ def trading_bot():
             web_data['profit_curve'].pop(0)
     
     web_data['current_price'] = price_data['price']
+    # 在更新持仓前检查止盈/止损是否触发平仓
+    try:
+        check_stop_take_profit(price_data['price'])
+    except Exception:
+        pass
     # 优先真实持仓，失败回退纸上推导
     cur_pos = None
     try:
@@ -1357,6 +1575,13 @@ def trading_bot():
 
     # 4. 执行交易
     execute_trade(signal_data, price_data)
+
+    # 5. 更新胜率与交易次数统计（基于反转视为平仓）
+    try:
+        compute_win_rate_from_history()
+    except Exception as e_stats:
+        print(f"更新胜率统计失败: {e_stats}")
+
 
 
 def main():

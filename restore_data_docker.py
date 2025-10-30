@@ -41,7 +41,7 @@ def execute_mysql_command(sql_command):
             '-e', sql_command
         ]
         
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=30)
         
         if result.returncode == 0:
             return True, result.stdout

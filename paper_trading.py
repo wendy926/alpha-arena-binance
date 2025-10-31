@@ -204,8 +204,27 @@ def compute_win_rate_from_db():
 
     for t in trades:
         action = (t.get('action') or '').lower()
-        price = float(t.get('price') or 0.0)
-        amount = float(t.get('amount') or 0.0)
+        
+        # 修复：如果price或amount为None/空，跳过这条记录
+        raw_price = t.get('price')
+        raw_amount = t.get('amount')
+        
+        if raw_price is None or raw_price == '' or raw_amount is None or raw_amount == '':
+            print(f"⚠️ 跳过无效记录: action={action}, price={raw_price}, amount={raw_amount}")
+            continue
+            
+        try:
+            price = float(raw_price)
+            amount = float(raw_amount)
+            
+            # 检查是否为0值
+            if price <= 0 or amount <= 0:
+                print(f"⚠️ 跳过零值记录: action={action}, price={price}, amount={amount}")
+                continue
+                
+        except (ValueError, TypeError):
+            print(f"⚠️ 跳过无法转换的记录: action={action}, price={raw_price}, amount={raw_amount}")
+            continue
         if action in ('open_long', 'open_short'):
             current_side = 'long' if action == 'open_long' else 'short'
             entry_price = price

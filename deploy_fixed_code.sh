@@ -22,11 +22,11 @@ sleep 15
 # 3. 测试API端点
 echo "🧪 3. 测试修复结果..."
 echo "    📊 测试trades API..."
-TRADES_RESPONSE=$(ssh root@47.236.115.4 "curl -s http://localhost:5000/api/trades")
+TRADES_RESPONSE=$(ssh root@47.236.115.4 "curl -s http://localhost:8080/api/trades")
 echo "    Trades API返回: $TRADES_RESPONSE"
 
 echo "    📊 测试dashboard API..."
-DASHBOARD_RESPONSE=$(ssh root@47.236.115.4 "curl -s http://localhost:5000/api/dashboard")
+DASHBOARD_RESPONSE=$(ssh root@47.236.115.4 "curl -s http://localhost:8080/api/dashboard")
 echo "    Dashboard API返回: $DASHBOARD_RESPONSE"
 
 # 4. 检查应用日志

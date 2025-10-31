@@ -138,12 +138,20 @@ def get_last_open_trade():
     conn = _get_db_conn()
     c = conn.cursor()
     try:
-        sql = ("""
-            SELECT timestamp, symbol, timeframe, signal, action, amount, price, stop_loss, take_profit, confidence, reason
-            FROM trades
-            WHERE action IN ('open_long','open_short')
-            ORDER BY id DESC LIMIT 1
-        """)
+        if DB_TYPE == 'mysql':
+            sql = ("""
+                SELECT timestamp, symbol, timeframe, `signal`, action, amount, price, stop_loss, take_profit, confidence, reason
+                FROM trades
+                WHERE action IN ('open_long','open_short')
+                ORDER BY id DESC LIMIT 1
+            """)
+        else:
+            sql = ("""
+                SELECT timestamp, symbol, timeframe, signal, action, amount, price, stop_loss, take_profit, confidence, reason
+                FROM trades
+                WHERE action IN ('open_long','open_short')
+                ORDER BY id DESC LIMIT 1
+            """)
         c.execute(sql)
         row = c.fetchone()
         if not row:

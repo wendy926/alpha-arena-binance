@@ -203,7 +203,7 @@ def initialize_data():
         # 设置交易所（如果还没设置）
         try:
             # 测试一下exchange是否可用
-            deepseekok2.exchange.fetch_balance()
+            deepseekok2.safe_fetch_balance()
         except:
             # 如果不可用，进行设置（即使失败也继续加载公共行情数据）
             if not deepseekok2.setup_exchange():
@@ -214,7 +214,7 @@ def initialize_data():
         if price_data:
             # 更新账户信息
             try:
-                balance = deepseekok2.exchange.fetch_balance()
+                balance = deepseekok2.safe_fetch_balance()
                 deepseekok2.web_data['account_info'] = {
                     'usdt_balance': balance['USDT']['free'],
                     'total_equity': balance['USDT']['total']

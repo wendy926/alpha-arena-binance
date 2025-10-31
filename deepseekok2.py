@@ -141,44 +141,113 @@ def setup_exchange():
         # 惰性初始化exchange
         if exchange is None:
             try:
-                exchange = _ccxt.binanceusdm({
-                    'enableRateLimit': True,
-                    'options': {'defaultType': 'future'}
-                })
-                print("已初始化 Binance USDT-M 期货接口")
+                # 检查是否有API密钥配置
+                api_key = os.getenv('BINANCE_API_KEY')
+                secret = os.getenv('BINANCE_SECRET_KEY')
+                
+                if api_key and secret and not TRADE_CONFIG['test_mode']:
+                    # 实盘模式：使用API密钥
+                    exchange = _ccxt.binanceusdm({
+                        'apiKey': api_key,
+                        'secret': secret,
+                        'enableRateLimit': True,
+                        'options': {'defaultType': 'future'}
+                    })
+                    print("已初始化 Binance USDT-M 期货接口（实盘模式）")
+                else:
+                    # 模拟模式：不使用API密钥，仅用于获取公开数据
+                    exchange = _ccxt.binanceusdm({
+                        'enableRateLimit': True,
+                        'options': {'defaultType': 'future'}
+                    })
+                    print("已初始化 Binance USDT-M 期货接口（模拟模式，仅公开数据）")
+                    
             except Exception as e_init:
                 print(f"初始化交易所失败: {e_init}")
                 return False
-        # 设置杠杆（Binance Futures）
-        try:
-            exchange.set_leverage(
-                TRADE_CONFIG['leverage'],
-                TRADE_CONFIG['symbol']
-            )
-        except Exception as e_leverage:
-            print(f"设置杠杆失败（忽略继续）: {e_leverage}")
 
-        # 设置保证金模式为全仓（如果支持）
-        if hasattr(exchange, 'set_margin_mode'):
+        # 只有在实盘模式且有API密钥时才设置杠杆和保证金模式
+        if not TRADE_CONFIG['test_mode'] and hasattr(exchange, 'apiKey') and exchange.apiKey:
+            # 设置杠杆（Binance Futures）
             try:
-                exchange.set_margin_mode('cross', TRADE_CONFIG['symbol'])
-            except Exception as e_margin:
-                print(f"设置保证金模式失败（忽略继续）: {e_margin}")
+                exchange.set_leverage(
+                    TRADE_CONFIG['leverage'],
+                    TRADE_CONFIG['symbol']
+                )
+                print(f"设置杠杆倍数: {TRADE_CONFIG['leverage']}x")
+            except Exception as e_leverage:
+                print(f"设置杠杆失败（忽略继续）: {e_leverage}")
 
-        print(f"设置杠杆倍数: {TRADE_CONFIG['leverage']}x")
+            # 设置保证金模式为全仓（如果支持）
+            if hasattr(exchange, 'set_margin_mode'):
+                try:
+                    exchange.set_margin_mode('cross', TRADE_CONFIG['symbol'])
+                except Exception as e_margin:
+                    print(f"设置保证金模式失败（忽略继续）: {e_margin}")
 
-        # 获取余额
-        try:
-            balance = exchange.fetch_balance()
-            usdt_balance = balance.get('USDT', {}).get('free', 0)
-            print(f"当前USDT余额: {usdt_balance:.2f}")
-        except Exception as e_bal:
-            print(f"获取余额失败（忽略继续）: {e_bal}")
+            # 获取真实余额
+            try:
+                balance = exchange.fetch_balance()
+                usdt_balance = balance.get('USDT', {}).get('free', 0)
+                print(f"当前USDT余额: {usdt_balance:.2f}")
+            except Exception as e_bal:
+                print(f"获取余额失败（忽略继续）: {e_bal}")
+        else:
+            print("模拟模式：跳过杠杆设置和余额获取，使用模拟数据")
 
         return True
     except Exception as e:
         print(f"交易所设置失败: {e}")
         return False
+
+
+def safe_fetch_balance():
+    """安全地获取余额，在模拟模式下返回模拟余额"""
+    global initial_balance
+    
+    # 检查是否有API密钥
+    binance_api_key = os.getenv('BINANCE_API_KEY')
+    binance_secret = os.getenv('BINANCE_SECRET_KEY')
+    
+    # 如果是测试模式或没有API密钥，返回模拟余额
+    if TRADE_CONFIG['test_mode'] or not binance_api_key or not binance_secret:
+        simulated_balance = {
+            'USDT': {
+                'free': 10000.0,
+                'used': 0.0,
+                'total': 10000.0
+            }
+        }
+        
+        # 设置初始余额
+        if initial_balance is None:
+            initial_balance = 10000.0
+            
+        return simulated_balance
+    
+    # 尝试获取真实余额
+    try:
+        if exchange:
+            balance = exchange.fetch_balance()
+            return balance
+        else:
+            raise Exception("Exchange not initialized")
+    except Exception as e:
+        print(f"获取真实余额失败，使用模拟余额: {e}")
+        # 回退到模拟余额
+        simulated_balance = {
+            'USDT': {
+                'free': 10000.0,
+                'used': 0.0,
+                'total': 10000.0
+            }
+        }
+        
+        # 设置初始余额
+        if initial_balance is None:
+            initial_balance = 10000.0
+            
+        return simulated_balance
 
 
 def calculate_technical_indicators(df):
@@ -1493,7 +1562,7 @@ def execute_trade(signal_data, price_data):
 
     try:
         # 获取账户余额
-        balance = exchange.fetch_balance()
+        balance = safe_fetch_balance()
         usdt_balance = balance['USDT']['free']
         required_margin = price_data['price'] * TRADE_CONFIG['amount'] / TRADE_CONFIG['leverage']
 
@@ -1672,7 +1741,7 @@ def trading_bot():
 
     # 3. 更新Web数据
     try:
-        balance = exchange.fetch_balance()
+        balance = safe_fetch_balance()
         current_equity = balance['USDT']['total']
         
         # 设置初始余额

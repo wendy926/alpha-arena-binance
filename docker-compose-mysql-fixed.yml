@@ -1,0 +1,114 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: alpha-arena-mysql
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=alpha_root_2025
+      - MYSQL_DATABASE=alpha_arena
+      - MYSQL_USER=alpha
+      - MYSQL_PASSWORD=alpha_pwd_2025
+      # 添加更多MySQL配置环境变量
+      - MYSQL_ROOT_HOST=%
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # 添加自定义MySQL配置
+      - ./mysql-config:/etc/mysql/conf.d
+    # 优化MySQL启动命令
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --skip-host-cache
+      --skip-name-resolve
+      --innodb-buffer-pool-size=256M
+      --innodb-log-file-size=64M
+      --innodb-flush-log-at-trx-commit=2
+      --innodb-flush-method=O_DIRECT
+      --max-connections=200
+      --wait-timeout=28800
+      --interactive-timeout=28800
+      --sql-mode=STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --innodb-use-native-aio=0
+    # 改进健康检查
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-palpha_root_2025"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    # 添加网络配置
+    networks:
+      - alpha_network
+    # 添加安全选项
+    security_opt:
+      - seccomp:unconfined
+    # 设置用户权限
+    user: "999:999"
+
+  btc-trading-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: btc-trading-bot
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # 挂载.env文件（必需）
+      - ./.env:/app/.env:ro
+      # 持久化数据（可选）
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+      - PAPER_TRADING=true
+      - DB_TYPE=mysql
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=alpha
+      - MYSQL_PASSWORD=alpha_pwd_2025
+      - MYSQL_DB=alpha_arena
+      # 添加数据库连接配置
+      - DATABASE_URL=mysql://alpha:alpha_pwd_2025@mysql:3306/alpha_arena
+      - MYSQL_CHARSET=utf8mb4
+    depends_on:
+      mysql:
+        condition: service_healthy
+    # 资源限制（可选）
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/dashboard"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - alpha_network
+
+# 定义网络
+networks:
+  alpha_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# 定义数据卷
+volumes:
+  mysql_data:
+    driver: local

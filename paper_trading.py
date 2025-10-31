@@ -48,7 +48,7 @@ def init_db():
                 timestamp DATETIME,
                 symbol VARCHAR(32),
                 timeframe VARCHAR(16),
-                signal VARCHAR(8),
+                `signal` VARCHAR(8),
                 action VARCHAR(16),
                 amount DOUBLE,
                 price DOUBLE,
@@ -97,7 +97,7 @@ def record_trade(signal_data, price_data, action, amount):
     take_profit = signal_data.get('take_profit', None)
 
     if DB_TYPE == 'mysql':
-        sql = ('INSERT INTO trades (timestamp, symbol, timeframe, signal, action, amount, price, stop_loss, take_profit, confidence, reason) '
+        sql = ('INSERT INTO trades (timestamp, symbol, timeframe, `signal`, action, amount, price, stop_loss, take_profit, confidence, reason) '
                'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)')
         params = (timestamp, symbol, timeframe, signal, action, float(amount or 0.0), price, stop_loss, take_profit, confidence, reason)
     else:
@@ -118,7 +118,7 @@ def get_last_trade():
     c = conn.cursor()
     try:
         if DB_TYPE == 'mysql':
-            c.execute('SELECT timestamp, symbol, timeframe, signal, action, amount, price, stop_loss, take_profit, confidence, reason FROM trades ORDER BY id DESC LIMIT 1')
+            c.execute('SELECT timestamp, symbol, timeframe, `signal`, action, amount, price, stop_loss, take_profit, confidence, reason FROM trades ORDER BY id DESC LIMIT 1')
         else:
             c.execute('SELECT timestamp, symbol, timeframe, signal, action, amount, price, stop_loss, take_profit, confidence, reason FROM trades ORDER BY id DESC LIMIT 1')
         row = c.fetchone()
@@ -162,7 +162,7 @@ def list_trades(limit=200):
     c = conn.cursor()
     try:
         if DB_TYPE == 'mysql':
-            c.execute('SELECT timestamp, symbol, timeframe, signal, action, amount, price, stop_loss, take_profit, confidence, reason FROM trades ORDER BY id DESC LIMIT %s', (int(limit or 200),))
+            c.execute('SELECT timestamp, symbol, timeframe, `signal`, action, amount, price, stop_loss, take_profit, confidence, reason FROM trades ORDER BY id DESC LIMIT %s', (int(limit or 200),))
         else:
             c.execute('SELECT timestamp, symbol, timeframe, signal, action, amount, price, stop_loss, take_profit, confidence, reason FROM trades ORDER BY id DESC LIMIT ?', (int(limit or 200),))
         rows = c.fetchall()
@@ -179,7 +179,10 @@ def get_all_trades():
     conn = _get_db_conn()
     c = conn.cursor()
     try:
-        c.execute('SELECT timestamp, symbol, timeframe, signal, action, amount, price, stop_loss, take_profit, confidence, reason FROM trades ORDER BY id ASC')
+        if DB_TYPE == 'mysql':
+            c.execute('SELECT timestamp, symbol, timeframe, `signal`, action, amount, price, stop_loss, take_profit, confidence, reason FROM trades ORDER BY id ASC')
+        else:
+            c.execute('SELECT timestamp, symbol, timeframe, signal, action, amount, price, stop_loss, take_profit, confidence, reason FROM trades ORDER BY id ASC')
         rows = c.fetchall()
         keys = ['timestamp', 'symbol', 'timeframe', 'signal', 'action', 'amount', 'price', 'stop_loss', 'take_profit', 'confidence', 'reason']
         return [dict(zip(keys, r)) for r in rows]

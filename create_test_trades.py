@@ -1,135 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-创建测试交易记录来验证胜率计算
+创建测试交易记录 - 修复版本
+使用正确的record_trade参数格式
 """
 
 import os
 import sys
-from datetime import datetime, timedelta
-
-# 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-def create_test_trades():
-    """创建测试交易记录"""
+from datetime import datetime, timedelta
+import requests
+
+def get_real_btc_price():
+    """获取真实的BTC价格"""
     try:
-        from paper_trading import record_trade, compute_win_rate_from_db
-        
-        print("🔧 创建测试交易记录...")
-        
-        # 基础时间
-        base_time = datetime.now() - timedelta(days=7)
-        
-        # 创建一些测试交易（模拟66.7%胜率：2胜1负）
-        test_trades = [
-            # 第一笔交易 - 盈利
-            {
-                'timestamp': base_time.strftime('%Y-%m-%d %H:%M:%S'),
-                'symbol': 'BTC/USDT',
-                'timeframe': '15m',
-                'signal': 'BUY',
-                'action': 'open_long',
-                'amount': 0.01,
-                'price': 45000.0,
-                'stop_loss': 44000.0,
-                'take_profit': 46000.0,
-                'confidence': 'HIGH',
-                'reason': 'AI分析：强烈看涨信号'
-            },
-            {
-                'timestamp': (base_time + timedelta(hours=2)).strftime('%Y-%m-%d %H:%M:%S'),
-                'symbol': 'BTC/USDT',
-                'timeframe': '15m',
-                'signal': 'SELL',
-                'action': 'close_long',
-                'amount': 0.01,
-                'price': 46500.0,  # 盈利
-                'stop_loss': None,
-                'take_profit': None,
-                'confidence': 'HIGH',
-                'reason': '达到止盈目标'
-            },
-            
-            # 第二笔交易 - 盈利
-            {
-                'timestamp': (base_time + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S'),
-                'symbol': 'BTC/USDT',
-                'timeframe': '15m',
-                'signal': 'SELL',
-                'action': 'open_short',
-                'amount': 0.01,
-                'price': 47000.0,
-                'stop_loss': 48000.0,
-                'take_profit': 46000.0,
-                'confidence': 'MEDIUM',
-                'reason': 'AI分析：看跌信号'
-            },
-            {
-                'timestamp': (base_time + timedelta(days=1, hours=3)).strftime('%Y-%m-%d %H:%M:%S'),
-                'symbol': 'BTC/USDT',
-                'timeframe': '15m',
-                'signal': 'BUY',
-                'action': 'close_short',
-                'amount': 0.01,
-                'price': 45500.0,  # 盈利
-                'stop_loss': None,
-                'take_profit': None,
-                'confidence': 'MEDIUM',
-                'reason': '达到止盈目标'
-            },
-            
-            # 第三笔交易 - 亏损
-            {
-                'timestamp': (base_time + timedelta(days=2)).strftime('%Y-%m-%d %H:%M:%S'),
-                'symbol': 'BTC/USDT',
-                'timeframe': '15m',
-                'signal': 'BUY',
-                'action': 'open_long',
-                'amount': 0.01,
-                'price': 46000.0,
-                'stop_loss': 45000.0,
-                'take_profit': 47000.0,
-                'confidence': 'LOW',
-                'reason': 'AI分析：弱看涨信号'
-            },
-            {
-                'timestamp': (base_time + timedelta(days=2, hours=1)).strftime('%Y-%m-%d %H:%M:%S'),
-                'symbol': 'BTC/USDT',
-                'timeframe': '15m',
-                'signal': 'SELL',
-                'action': 'close_long',
-                'amount': 0.01,
-                'price': 45200.0,  # 亏损
-                'stop_loss': None,
-                'take_profit': None,
-                'confidence': 'LOW',
-                'reason': '触发止损'
-            }
-        ]
-        
-        # 插入交易记录
-        for i, trade in enumerate(test_trades, 1):
-            record_trade(**trade)
-            print(f"   {i}. {trade['action']} @ ${trade['price']}")
-        
-        print(f"✅ 成功创建 {len(test_trades)} 条测试交易记录")
-        
-        # 计算胜率
-        print("\n📊 计算胜率...")
-        stats = compute_win_rate_from_db()
-        
-        print(f"   胜率: {stats.get('win_rate', 0)}%")
-        print(f"   总交易次数: {stats.get('total_trades', 0)}")
-        print(f"   总盈亏: ${stats.get('total_profit', 0):.2f}")
-        
-        return stats
-        
-    except Exception as e:
-        print(f"❌ 创建测试交易失败: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+        response = requests.get('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT', timeout=5)
+        data = response.json()
+        return float(data['price'])
+    except:
+        return 65000.0  # 默认价格
 
 def clear_existing_trades():
     """清空现有交易记录"""
@@ -152,6 +42,193 @@ def clear_existing_trades():
         print(f"❌ 清空交易记录失败: {e}")
         return False
 
+def create_test_trades():
+    """创建测试交易记录"""
+    try:
+        from paper_trading import record_trade
+        
+        # 获取当前BTC价格
+        current_price = get_real_btc_price()
+        print(f"💰 当前BTC价格: ${current_price:,.2f}")
+        
+        # 创建测试交易数据 - 模拟66.7%胜率（2胜1负）
+        base_time = datetime.now() - timedelta(days=7)
+        
+        trades = [
+            # 第一笔交易 - 盈利 (开多 -> 平多)
+            {
+                'signal_data': {
+                    'signal': 'BUY',
+                    'confidence': 'HIGH',
+                    'reason': '测试交易1-开多',
+                    'stop_loss': current_price - 3000,
+                    'take_profit': current_price - 1000
+                },
+                'price_data': {
+                    'price': current_price - 2000,
+                    'symbol': 'BTC/USDT',
+                    'timeframe': '15m'
+                },
+                'action': 'open_long',
+                'amount': 0.01
+            },
+            {
+                'signal_data': {
+                    'signal': 'SELL',
+                    'confidence': 'HIGH',
+                    'reason': '测试交易1-平多-盈利',
+                    'stop_loss': None,
+                    'take_profit': None
+                },
+                'price_data': {
+                    'price': current_price - 1500,  # 盈利500
+                    'symbol': 'BTC/USDT',
+                    'timeframe': '15m'
+                },
+                'action': 'close_long',
+                'amount': 0.01
+            },
+            
+            # 第二笔交易 - 亏损 (开空 -> 平空)
+            {
+                'signal_data': {
+                    'signal': 'SELL',
+                    'confidence': 'MEDIUM',
+                    'reason': '测试交易2-开空',
+                    'stop_loss': current_price - 500,
+                    'take_profit': current_price - 1500
+                },
+                'price_data': {
+                    'price': current_price - 1000,
+                    'symbol': 'BTC/USDT',
+                    'timeframe': '15m'
+                },
+                'action': 'open_short',
+                'amount': 0.01
+            },
+            {
+                'signal_data': {
+                    'signal': 'BUY',
+                    'confidence': 'HIGH',
+                    'reason': '测试交易2-平空-亏损',
+                    'stop_loss': None,
+                    'take_profit': None
+                },
+                'price_data': {
+                    'price': current_price - 800,  # 亏损200
+                    'symbol': 'BTC/USDT',
+                    'timeframe': '15m'
+                },
+                'action': 'close_short',
+                'amount': 0.01
+            },
+            
+            # 第三笔交易 - 盈利 (开多 -> 平多)
+            {
+                'signal_data': {
+                    'signal': 'BUY',
+                    'confidence': 'HIGH',
+                    'reason': '测试交易3-开多',
+                    'stop_loss': current_price - 800,
+                    'take_profit': current_price - 200
+                },
+                'price_data': {
+                    'price': current_price - 500,
+                    'symbol': 'BTC/USDT',
+                    'timeframe': '15m'
+                },
+                'action': 'open_long',
+                'amount': 0.01
+            },
+            {
+                'signal_data': {
+                    'signal': 'SELL',
+                    'confidence': 'HIGH',
+                    'reason': '测试交易3-平多-盈利',
+                    'stop_loss': None,
+                    'take_profit': None
+                },
+                'price_data': {
+                    'price': current_price - 200,  # 盈利300
+                    'symbol': 'BTC/USDT',
+                    'timeframe': '15m'
+                },
+                'action': 'close_long',
+                'amount': 0.01
+            }
+        ]
+        
+        print("🔧 创建测试交易记录...")
+        
+        for i, trade in enumerate(trades, 1):
+            try:
+                record_trade(
+                    trade['signal_data'],
+                    trade['price_data'],
+                    trade['action'],
+                    trade['amount']
+                )
+                print(f"✅ 交易{i}: {trade['action']} @ ${trade['price_data']['price']:,.2f}")
+                
+            except Exception as e:
+                print(f"❌ 创建交易{i}失败: {e}")
+                return False
+        
+        print("✅ 测试交易记录创建完成")
+        return True
+        
+    except Exception as e:
+        print(f"❌ 创建测试交易失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def verify_win_rate():
+    """验证胜率计算"""
+    try:
+        from paper_trading import compute_win_rate_from_db
+        
+        print("\n📊 验证胜率计算:")
+        stats = compute_win_rate_from_db()
+        
+        print(f"   胜率: {stats.get('win_rate', 0)}%")
+        print(f"   总交易次数: {stats.get('total_trades', 0)}")
+        print(f"   总盈亏: ${stats.get('total_profit', 0):.2f}")
+        
+        expected_win_rate = 66.7  # 2胜1负
+        actual_win_rate = stats.get('win_rate', 0)
+        
+        if abs(actual_win_rate - expected_win_rate) < 1:
+            print("✅ 胜率计算正确")
+            return True
+        else:
+            print(f"❌ 胜率计算错误，期望{expected_win_rate}%，实际{actual_win_rate}%")
+            return False
+            
+    except Exception as e:
+        print(f"❌ 胜率验证失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def check_web_data_sync():
+    """检查web_data同步"""
+    try:
+        import deepseekok2
+        
+        print("\n🔍 检查web_data同步:")
+        performance = deepseekok2.web_data.get('performance', {})
+        
+        print(f"   web_data胜率: {performance.get('win_rate', 'N/A')}")
+        print(f"   web_data总交易: {performance.get('total_trades', 'N/A')}")
+        print(f"   web_data总盈亏: ${performance.get('total_profit', 0):.2f}")
+        
+        return performance
+        
+    except Exception as e:
+        print(f"❌ web_data检查失败: {e}")
+        return None
+
 def main():
     print("="*60)
     print("🧪 创建测试交易记录")
@@ -161,24 +238,37 @@ def main():
         # 加载环境变量
         from dotenv import load_dotenv
         load_dotenv()
+        print("✅ 环境变量加载成功")
         
         # 1. 清空现有记录
-        if clear_existing_trades():
-            # 2. 创建测试交易
-            stats = create_test_trades()
-            
-            if stats:
-                print("\n" + "="*60)
-                print("✅ 测试数据创建完成！")
-                print("💡 现在可以测试web界面的胜率显示")
-                print("   预期胜率: 66.7% (2胜1负)")
-                print(f"   实际胜率: {stats.get('win_rate', 0)}%")
-                print("="*60)
-            else:
-                print("\n❌ 测试数据创建失败")
+        if not clear_existing_trades():
+            return
+        
+        # 2. 创建测试交易
+        if not create_test_trades():
+            print("❌ 测试数据创建失败")
+            return
+        
+        # 3. 验证胜率计算
+        if not verify_win_rate():
+            print("❌ 胜率验证失败")
+            return
+        
+        # 4. 检查web_data同步
+        web_performance = check_web_data_sync()
+        
+        print("\n" + "="*60)
+        print("📋 测试总结:")
+        print("="*60)
+        print("✅ 测试交易记录创建成功")
+        print("✅ 胜率计算正确 (66.7%)")
+        print("💡 现在可以重启web服务器并检查网页显示")
+        print("="*60)
         
     except Exception as e:
         print(f"❌ 脚本执行失败: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()

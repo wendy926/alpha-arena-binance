@@ -849,8 +849,18 @@ def build_ai_prompt(price_data, last_signal=None, sentiment_data=None, current_p
 def get_current_position():
     """获取当前持仓情况 - Binance FAPI 版本"""
     try:
-        if exchange is None:
-            return None
+        # 在测试模式下或没有API密钥时，使用模拟持仓数据
+        if TRADE_CONFIG.get('test_mode', True) or exchange is None:
+            print("使用模拟持仓数据（测试模式）")
+            return compute_paper_position()
+        
+        # 检查是否有API密钥
+        binance_api_key = os.getenv('BINANCE_API_KEY')
+        binance_secret_key = os.getenv('BINANCE_SECRET_KEY')
+        if not binance_api_key or not binance_secret_key:
+            print("缺少API密钥，使用模拟持仓数据")
+            return compute_paper_position()
+        
         positions = exchange.fetch_positions([TRADE_CONFIG['symbol']])
 
         for pos in positions:
@@ -878,10 +888,8 @@ def get_current_position():
         return None
 
     except Exception as e:
-        print(f"获取持仓失败: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+        print(f"获取持仓失败，使用模拟持仓数据: {e}")
+        return compute_paper_position()
 
 
 def compute_paper_position(current_price=None):

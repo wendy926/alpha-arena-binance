@@ -108,11 +108,33 @@ async function updateDashboard() {
         const response = await fetch('/api/dashboard');
         const data = await response.json();
         
-        // 账户信息
-        document.getElementById('usdtBalance').textContent = 
-            data.account_info?.usdt_balance ? `$${data.account_info.usdt_balance.toFixed(2)}` : '--';
-        document.getElementById('totalEquity').textContent = 
-            data.account_info?.total_equity ? `$${data.account_info.total_equity.toFixed(2)}` : '--';
+        // 账户信息 - 显示调整后的余额和总权益（包含未实现盈亏）
+        const adjustedBalance = data.account_info?.adjusted_balance;
+        const adjustedEquity = data.account_info?.adjusted_equity;
+        const totalProfit = data.account_info?.total_profit;
+        const unrealizedPnl = data.account_info?.unrealized_pnl;
+        
+        // 可用余额 - 显示调整后的余额
+        const balanceElement = document.getElementById('usdtBalance');
+        if (adjustedBalance !== undefined) {
+            balanceElement.textContent = `$${adjustedBalance.toFixed(2)}`;
+            // 根据盈亏状态设置颜色
+            balanceElement.className = `value ${adjustedBalance >= (data.account_info?.usdt_balance || 0) ? 'positive' : 'negative'}`;
+        } else {
+            balanceElement.textContent = '--';
+            balanceElement.className = 'value';
+        }
+        
+        // 总权益 - 显示调整后的总权益
+        const equityElement = document.getElementById('totalEquity');
+        if (adjustedEquity !== undefined) {
+            equityElement.textContent = `$${adjustedEquity.toFixed(2)}`;
+            // 根据盈亏状态设置颜色
+            equityElement.className = `value ${totalProfit >= 0 ? 'positive' : 'negative'}`;
+        } else {
+            equityElement.textContent = '--';
+            equityElement.className = 'value';
+        }
         
         // 配置信息
         document.getElementById('leverage').textContent = 
@@ -149,11 +171,17 @@ async function updateDashboard() {
             document.getElementById('unrealizedPnl').textContent = '--';
         }
         
-        // 绩效统计
+        // 绩效统计 - 优先使用账户信息中的总盈亏数据
         const totalProfitEl = document.getElementById('totalProfit');
-        if (data.performance?.total_profit !== undefined) {
-            totalProfitEl.textContent = `$${data.performance.total_profit.toFixed(2)}`;
-            totalProfitEl.className = `value pnl ${data.performance.total_profit >= 0 ? 'positive' : 'negative'}`;
+        const profitToShow = data.account_info?.total_profit !== undefined ? 
+            data.account_info.total_profit : data.performance?.total_profit;
+        
+        if (profitToShow !== undefined) {
+            totalProfitEl.textContent = `$${profitToShow.toFixed(2)}`;
+            totalProfitEl.className = `value pnl ${profitToShow >= 0 ? 'positive' : 'negative'}`;
+        } else {
+            totalProfitEl.textContent = '--';
+            totalProfitEl.className = 'value pnl';
         }
         
         const winRateVal = data.performance?.win_rate;

@@ -36,23 +36,65 @@ def index():
 def get_dashboard_data():
     """获取仪表板数据"""
     try:
-        # 实时保证持仓有值：优先尝试真实持仓，否则回退到纸上持仓
-        pos = deepseekok2.web_data.get('current_position')
-        if not pos:
-            try:
-                pos = deepseekok2.get_current_position()
-            except Exception:
-                pos = None
+        # 实时更新账户信息
+        try:
+            balance = deepseekok2.safe_fetch_balance()
+            current_equity = balance['USDT']['total']
+            
+            # 设置初始余额
+            if deepseekok2.initial_balance is None:
+                deepseekok2.initial_balance = current_equity
+            
+            # 计算实时总盈亏
+            total_profit = current_equity - deepseekok2.initial_balance
+            
+            # 实时保证持仓有值：优先尝试真实持仓，否则回退到纸上持仓
+            pos = deepseekok2.web_data.get('current_position')
             if not pos:
                 try:
-                    pos = deepseekok2.compute_paper_position(deepseekok2.web_data.get('current_price'))
+                    pos = deepseekok2.get_current_position()
                 except Exception:
                     pos = None
-            deepseekok2.web_data['current_position'] = pos
+                if not pos:
+                    try:
+                        pos = deepseekok2.compute_paper_position(deepseekok2.web_data.get('current_price'))
+                    except Exception:
+                        pos = None
+                deepseekok2.web_data['current_position'] = pos
+            
+            # 获取未实现盈亏
+            unrealized_pnl = pos.get('unrealized_pnl', 0) if pos else 0
+            
+            # 计算调整后的余额和总权益
+            adjusted_balance = balance['USDT']['free'] + unrealized_pnl
+            adjusted_equity = current_equity + unrealized_pnl
+            
+            # 更新账户信息
+            deepseekok2.web_data['account_info'] = {
+                'usdt_balance': balance['USDT']['free'],
+                'total_equity': current_equity,
+                'adjusted_balance': adjusted_balance,
+                'adjusted_equity': adjusted_equity,
+                'total_profit': total_profit,
+                'unrealized_pnl': unrealized_pnl
+            }
+            
+        except Exception as e:
+            print(f"实时更新账户信息失败: {e}")
+            # 如果账户信息为空，使用默认值
+            if not deepseekok2.web_data.get('account_info'):
+                deepseekok2.web_data['account_info'] = {
+                    'usdt_balance': 10000.0,
+                    'total_equity': 10000.0,
+                    'adjusted_balance': 10000.0,
+                    'adjusted_equity': 10000.0,
+                    'total_profit': 0.0,
+                    'unrealized_pnl': 0.0
+                }
 
-        # 性能回填：使用未实现盈亏作为总盈亏，避免空值
-        if deepseekok2.web_data['current_position']:
-            deepseekok2.web_data['performance']['total_profit'] = deepseekok2.web_data['current_position'].get('unrealized_pnl', 0)
+        # 性能回填：使用账户信息中的总盈亏
+        if deepseekok2.web_data.get('account_info', {}).get('total_profit') is not None:
+            deepseekok2.web_data['performance']['total_profit'] = deepseekok2.web_data['account_info']['total_profit']
 
         # 计算胜率与交易次数（基于数据库记录）
         try:
@@ -247,16 +289,73 @@ def initialize_data():
             # 更新账户信息
             try:
                 balance = deepseekok2.safe_fetch_balance()
+                current_equity = balance['USDT']['total']
+                
+                # 设置初始余额
+                if deepseekok2.initial_balance is None:
+                    deepseekok2.initial_balance = current_equity
+                
+                # 计算实时总盈亏
+                total_profit = current_equity - deepseekok2.initial_balance
+                
+                # 获取当前持仓的未实现盈亏
+                pos = None
+                try:
+                    pos = deepseekok2.get_current_position()
+                except Exception:
+                    pos = None
+                if not pos:
+                    try:
+                        pos = deepseekok2.compute_paper_position(price_data['price'])
+                    except Exception:
+                        pos = None
+                
+                unrealized_pnl = pos.get('unrealized_pnl', 0) if pos else 0
+                
+                # 计算实际可用余额（考虑未实现盈亏）
+                adjusted_balance = balance['USDT']['free'] + unrealized_pnl
+                adjusted_equity = current_equity + unrealized_pnl
+                
                 deepseekok2.web_data['account_info'] = {
                     'usdt_balance': balance['USDT']['free'],
-                    'total_equity': balance['USDT']['total']
+                    'total_equity': current_equity,
+                    'adjusted_balance': adjusted_balance,
+                    'adjusted_equity': adjusted_equity,
+                    'total_profit': total_profit,
+                    'unrealized_pnl': unrealized_pnl
                 }
             except Exception as e:
                 print(f"获取账户信息失败: {e}")
                 # 模拟模式下设置默认可用余额为10000U
+                current_equity = 10000.0
+                
+                # 设置初始余额
+                if deepseekok2.initial_balance is None:
+                    deepseekok2.initial_balance = current_equity
+                
+                # 计算实时总盈亏
+                total_profit = current_equity - deepseekok2.initial_balance
+                
+                # 获取当前持仓的未实现盈亏
+                pos = None
+                try:
+                    pos = deepseekok2.compute_paper_position(price_data['price'])
+                except Exception:
+                    pos = None
+                
+                unrealized_pnl = pos.get('unrealized_pnl', 0) if pos else 0
+                
+                # 计算实际可用余额（考虑未实现盈亏）
+                adjusted_balance = 10000.0 + unrealized_pnl
+                adjusted_equity = current_equity + unrealized_pnl
+                
                 deepseekok2.web_data['account_info'] = {
                     'usdt_balance': 10000.0,
-                    'total_equity': 10000.0
+                    'total_equity': current_equity,
+                    'adjusted_balance': adjusted_balance,
+                    'adjusted_equity': adjusted_equity,
+                    'total_profit': total_profit,
+                    'unrealized_pnl': unrealized_pnl
                 }
             
             # 更新基础数据

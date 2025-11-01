@@ -1756,9 +1756,24 @@ def trading_bot():
         if initial_balance is None:
             initial_balance = current_equity
         
+        # 计算实时总盈亏
+        total_profit = current_equity - initial_balance
+        
+        # 获取当前持仓的未实现盈亏
+        current_position = get_current_position()
+        unrealized_pnl = current_position.get('unrealized_pnl', 0) if current_position else 0
+        
+        # 计算实际可用余额（考虑未实现盈亏）
+        adjusted_balance = balance['USDT']['free'] + unrealized_pnl
+        adjusted_equity = current_equity + unrealized_pnl
+        
         web_data['account_info'] = {
             'usdt_balance': balance['USDT']['free'],
-            'total_equity': current_equity
+            'total_equity': current_equity,
+            'adjusted_balance': adjusted_balance,  # 调整后的可用余额
+            'adjusted_equity': adjusted_equity,    # 调整后的总权益
+            'total_profit': total_profit,          # 总盈亏
+            'unrealized_pnl': unrealized_pnl       # 未实现盈亏
         }
         
         # 记录收益曲线数据
@@ -1783,20 +1798,37 @@ def trading_bot():
     except Exception as e:
         print(f"更新余额失败: {e}")
         # 模拟模式下：使用默认权益计算收益曲线，并回退持仓
-        web_data['account_info'] = {
-            'usdt_balance': 10000.0,
-            'total_equity': 10000.0
-        }
+        current_equity = 10000.0
+        
         # 设置初始余额（首次）
         if initial_balance is None:
-            initial_balance = web_data['account_info']['total_equity']
-        # 回退持仓到纸上推导
+            initial_balance = current_equity
+        
+        # 计算实时总盈亏
+        total_profit = current_equity - initial_balance
+        
+        # 获取当前持仓的未实现盈亏
         pos = None
         try:
             pos = compute_paper_position(price_data['price'])
         except Exception:
             pos = None
         web_data['current_position'] = pos
+        
+        unrealized_pnl = pos.get('unrealized_pnl', 0) if pos else 0
+        
+        # 计算实际可用余额（考虑未实现盈亏）
+        adjusted_balance = 10000.0 + unrealized_pnl
+        adjusted_equity = current_equity + unrealized_pnl
+        
+        web_data['account_info'] = {
+            'usdt_balance': 10000.0,
+            'total_equity': current_equity,
+            'adjusted_balance': adjusted_balance,  # 调整后的可用余额
+            'adjusted_equity': adjusted_equity,    # 调整后的总权益
+            'total_profit': total_profit,          # 总盈亏
+            'unrealized_pnl': unrealized_pnl       # 未实现盈亏
+        }
         # 记录收益曲线（基于模拟权益与未实现盈亏）
         unrealized_pnl = pos.get('unrealized_pnl', 0) if pos else 0
         total_profit = web_data['account_info']['total_equity'] - initial_balance

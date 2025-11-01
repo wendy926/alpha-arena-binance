@@ -305,6 +305,17 @@ body {
     color: var(--danger-color);
 }
 
+/* 通用的正负值样式 */
+.value.positive {
+    color: var(--success-color);
+    font-weight: 600;
+}
+
+.value.negative {
+    color: var(--danger-color);
+    font-weight: 600;
+}
+
 /* K线图表 */
 .chart-section {
     margin-bottom: 30px;

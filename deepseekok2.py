@@ -1,6 +1,8 @@
 import os
 import time
 import schedule
+import gc
+import psutil
 
 # 可选导入openai，避免版本兼容问题
 try:
@@ -75,11 +77,11 @@ exchange = None
 
 # 内存优化配置
 MEMORY_CONFIG = {
-    'ai_decisions_limit': 30,      # 从50减少到30
-    'trade_history_limit': 50,     # 从100减少到50  
-    'profit_curve_limit': 100,     # 从200减少到100
-    'signal_history_limit': 20,    # 从30减少到20
-    'kline_data_points': 48        # 从96减少到48（12小时数据）
+    'ai_decisions_limit': 10,      # 极限优化：从20减少到10
+    'trade_history_limit': 15,     # 极限优化：从30减少到15  
+    'profit_curve_limit': 25,      # 极限优化：从50减少到25
+    'signal_history_limit': 8,     # 极限优化：从15减少到8
+    'kline_data_points': 24        # 极限优化：从36减少到24（6小时数据）
 }
 
 # 交易参数配置 - 结合两个版本的优点
@@ -1940,8 +1942,34 @@ def main():
     print("执行频率: 每15分钟整点执行")
 
     # 循环执行（不使用schedule）
+    loop_count = 0
     while True:
         trading_bot()  # 函数内部会自己等待整点
+        
+        # 内存监控和清理（每10次循环执行一次）
+        loop_count += 1
+        if loop_count % 10 == 0:
+            try:
+                # 获取当前进程内存使用
+                process = psutil.Process()
+                memory_info = process.memory_info()
+                memory_mb = memory_info.rss / 1024 / 1024
+                
+                print(f"🔍 内存监控 - 当前使用: {memory_mb:.1f}MB")
+                
+                # 如果内存使用超过100MB，执行垃圾回收
+                if memory_mb > 100:
+                    print("🧹 执行内存清理...")
+                    gc.collect()
+                    
+                    # 再次检查内存
+                    memory_info_after = process.memory_info()
+                    memory_mb_after = memory_info_after.rss / 1024 / 1024
+                    freed_mb = memory_mb - memory_mb_after
+                    print(f"✅ 清理完成 - 释放: {freed_mb:.1f}MB, 当前: {memory_mb_after:.1f}MB")
+                    
+            except Exception as e:
+                print(f"⚠️ 内存监控失败: {e}")
 
         # 执行完后等待一段时间再检查（避免频繁循环）
         time.sleep(60)  # 每分钟检查一次

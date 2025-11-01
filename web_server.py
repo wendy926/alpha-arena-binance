@@ -4,6 +4,7 @@ import threading
 import sys
 import os
 import requests
+from datetime import datetime
 
 # 获取当前文件所在目录
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -16,6 +17,11 @@ from paper_trading import init_db, list_trades, compute_win_rate_from_db
 app = Flask(__name__, 
             template_folder=os.path.join(BASE_DIR, 'templates'),
             static_folder=os.path.join(BASE_DIR, 'static'))
+
+# 配置Flask的JSON编码设置
+app.config['JSON_AS_ASCII'] = False
+app.config['JSONIFY_PRETTYPRINT_REGULAR'] = True
+
 CORS(app)
 
 @app.route('/')
@@ -54,24 +60,16 @@ def get_dashboard_data():
             deepseekok2.web_data['performance']['win_rate'] = stats.get('win_rate', 0.0)
             deepseekok2.web_data['performance']['total_trades'] = stats.get('total_trades', 0)
             deepseekok2.web_data['performance']['total_profit'] = stats.get('total_profit', 0.0)
-            print(f"✅ 胜率计算成功: {stats.get('win_rate', 0.0)}%, 总交易: {stats.get('total_trades', 0)}")
-            
-            # 临时修复：如果计算结果为0，使用测试数据
-            if stats.get('total_trades', 0) == 0:
-                print("⚠️ 检测到交易次数为0，使用测试数据")
-                deepseekok2.web_data['performance']['win_rate'] = 100.0
-                deepseekok2.web_data['performance']['total_trades'] = 2
-                deepseekok2.web_data['performance']['total_profit'] = 2.0
+            print(f"✅ 胜率计算成功: {stats.get('win_rate', 0.0)}%, 总交易: {stats.get('total_trades', 0)}, 总盈亏: ${stats.get('total_profit', 0.0):.2f}")
                 
         except Exception as e_stats:
             print(f"❌ 计算胜率失败: {e_stats}")
             import traceback
             traceback.print_exc()
-            # 使用测试数据而不是0值
-            print("⚠️ 胜率计算异常，使用测试数据")
-            deepseekok2.web_data['performance']['win_rate'] = 100.0
-            deepseekok2.web_data['performance']['total_trades'] = 2
-            deepseekok2.web_data['performance']['total_profit'] = 2.0
+            # 使用默认值
+            deepseekok2.web_data['performance']['win_rate'] = 0.0
+            deepseekok2.web_data['performance']['total_trades'] = 0
+            deepseekok2.web_data['performance']['total_profit'] = 0.0
 
         data = {
             'account_info': deepseekok2.web_data['account_info'],
@@ -122,9 +120,34 @@ def get_trade_history():
 def get_ai_decisions():
     """获取AI决策历史"""
     try:
-        return jsonify(deepseekok2.web_data['ai_decisions'])
+        ai_decisions = deepseekok2.web_data.get('ai_decisions', [])
+        
+        # 确保返回的数据格式正确
+        if not isinstance(ai_decisions, list):
+            ai_decisions = []
+        
+        # 验证每个决策对象的完整性
+        validated_decisions = []
+        for decision in ai_decisions:
+            if isinstance(decision, dict):
+                # 确保必要字段存在
+                validated_decision = {
+                    'signal': decision.get('signal', 'HOLD'),
+                    'confidence': decision.get('confidence', 'LOW'),
+                    'reason': decision.get('reason', '暂无分析'),
+                    'stop_loss': float(decision.get('stop_loss', 0)),
+                    'take_profit': float(decision.get('take_profit', 0)),
+                    'timestamp': decision.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+                }
+                validated_decisions.append(validated_decision)
+        
+        return jsonify(validated_decisions)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f"❌ AI决策API错误: {e}")
+        import traceback
+        traceback.print_exc()
+        # 返回空数组而不是错误，避免前端JSON解析失败
+        return jsonify([])
 
 @app.route('/api/signals')
 def get_signal_history():

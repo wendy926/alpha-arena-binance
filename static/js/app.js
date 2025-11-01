@@ -455,45 +455,107 @@ async function updateProfitChart() {
 async function updateAIDecisions() {
     try {
         const response = await fetch('/api/ai_decisions');
-        const data = await response.json();
         
-        if (!data || data.length === 0) return;
+        // 检查响应状态
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        // 检查响应内容类型
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            throw new Error('响应不是JSON格式');
+        }
+        
+        // 获取响应文本，然后尝试解析JSON
+        const responseText = await response.text();
+        if (!responseText || responseText.trim() === '') {
+            console.warn('AI决策API返回空响应');
+            return;
+        }
+        
+        let data;
+        try {
+            data = JSON.parse(responseText);
+        } catch (jsonError) {
+            console.error('JSON解析失败:', jsonError);
+            console.error('响应内容:', responseText);
+            return;
+        }
+        
+        // 确保data是数组
+        if (!Array.isArray(data)) {
+            console.warn('AI决策数据格式错误，期望数组:', data);
+            return;
+        }
+        
+        if (data.length === 0) {
+            // 显示无数据状态
+            const latestDiv = document.getElementById('latestDecision');
+            const historyDiv = document.getElementById('aiHistory');
+            
+            latestDiv.innerHTML = '<div style="color: #9ca3af; text-align: center; padding: 20px;">暂无AI决策数据</div>';
+            historyDiv.innerHTML = '<div style="color: #9ca3af; text-align: center; padding: 20px;">暂无历史记录</div>';
+            return;
+        }
         
         // 显示最新决策
         const latest = data[data.length - 1];
         const latestDiv = document.getElementById('latestDecision');
         
+        // 验证最新决策数据完整性
+        if (!latest || typeof latest !== 'object') {
+            console.warn('最新AI决策数据无效:', latest);
+            return;
+        }
+        
         latestDiv.innerHTML = `
             <div class="ai-signal">
-                <span class="signal-badge ${latest.signal}">${latest.signal}</span>
-                <span class="confidence-badge ${latest.confidence}">${latest.confidence}</span>
+                <span class="signal-badge ${latest.signal || 'HOLD'}">${latest.signal || 'HOLD'}</span>
+                <span class="confidence-badge ${latest.confidence || 'LOW'}">${latest.confidence || 'LOW'}</span>
             </div>
-            <div class="ai-reason">${latest.reason}</div>
+            <div class="ai-reason">${latest.reason || '暂无分析'}</div>
             <div class="ai-prices">
-                <span class="stop-loss">止损: $${latest.stop_loss.toFixed(2)}</span>
-                <span class="take-profit">止盈: $${latest.take_profit.toFixed(2)}</span>
+                <span class="stop-loss">止损: $${(latest.stop_loss || 0).toFixed(2)}</span>
+                <span class="take-profit">止盈: $${(latest.take_profit || 0).toFixed(2)}</span>
             </div>
             <div style="color: #9ca3af; font-size: 0.85em; margin-top: 10px;">
-                ${latest.timestamp}
+                ${latest.timestamp || '未知时间'}
             </div>
         `;
         
         // 显示历史决策
         const historyDiv = document.getElementById('aiHistory');
-        const historyHTML = data.slice(-10).reverse().slice(1).map(decision => `
-            <div class="ai-history-item">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                    <span class="signal-badge ${decision.signal}" style="font-size: 0.8em; padding: 4px 10px;">${decision.signal}</span>
-                    <span style="color: #9ca3af; font-size: 0.8em;">${decision.timestamp}</span>
+        const historyData = data.slice(-10).reverse().slice(1);
+        
+        const historyHTML = historyData.map(decision => {
+            if (!decision || typeof decision !== 'object') return '';
+            return `
+                <div class="ai-history-item">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                        <span class="signal-badge ${decision.signal || 'HOLD'}" style="font-size: 0.8em; padding: 4px 10px;">${decision.signal || 'HOLD'}</span>
+                        <span style="color: #9ca3af; font-size: 0.8em;">${decision.timestamp || '未知时间'}</span>
+                    </div>
+                    <div style="color: #9ca3af;">${decision.reason || '暂无分析'}</div>
                 </div>
-                <div style="color: #9ca3af;">${decision.reason}</div>
-            </div>
-        `).join('');
+            `;
+        }).filter(html => html !== '').join('');
         
         historyDiv.innerHTML = historyHTML || '<div style="color: #9ca3af; text-align: center; padding: 20px;">暂无历史记录</div>';
         
     } catch (error) {
         console.error('AI决策更新失败:', error);
+        
+        // 显示错误状态
+        const latestDiv = document.getElementById('latestDecision');
+        const historyDiv = document.getElementById('aiHistory');
+        
+        if (latestDiv) {
+            latestDiv.innerHTML = '<div style="color: #ef4444; text-align: center; padding: 20px;">AI决策数据加载失败</div>';
+        }
+        if (historyDiv) {
+            historyDiv.innerHTML = '<div style="color: #ef4444; text-align: center; padding: 20px;">历史数据加载失败</div>';
+        }
     }
 }
 

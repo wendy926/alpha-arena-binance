@@ -37,17 +37,21 @@ def init_sqlite_database():
         cursor.execute("DROP TABLE IF EXISTS trades")
         cursor.execute("DROP TABLE IF EXISTS positions")
         
-        # 创建交易表
+        # 创建交易表 - 匹配paper_trading.py期望的结构
         cursor.execute('''
             CREATE TABLE trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME NOT NULL,
                 symbol TEXT NOT NULL,
-                side TEXT NOT NULL,
+                timeframe TEXT DEFAULT '15m',
+                signal TEXT,
+                action TEXT NOT NULL,
                 amount REAL NOT NULL,
                 price REAL NOT NULL,
-                timestamp DATETIME NOT NULL,
-                profit_loss REAL DEFAULT 0,
-                status TEXT DEFAULT 'completed'
+                stop_loss REAL,
+                take_profit REAL,
+                confidence TEXT,
+                reason TEXT
             )
         ''')
         
@@ -77,20 +81,20 @@ def init_sqlite_database():
         cursor.execute("DELETE FROM trades")
         cursor.execute("DELETE FROM positions")
         
-        # 添加历史交易记录
+        # 添加历史交易记录 - 匹配新的表结构
         trades_data = [
-            ("BTCUSDT", "buy", 0.001, btc_price - 2000, "2024-01-15 10:30:00", 50.0, "completed"),
-            ("BTCUSDT", "sell", 0.001, btc_price - 1500, "2024-01-15 14:20:00", 500.0, "completed"),
-            ("BTCUSDT", "buy", 0.0015, btc_price - 1000, "2024-01-16 09:15:00", -200.0, "completed"),
-            ("BTCUSDT", "sell", 0.0015, btc_price - 800, "2024-01-16 16:45:00", 300.0, "completed"),
-            ("BTCUSDT", "buy", 0.002, btc_price - 500, "2024-01-17 11:00:00", 0, "completed"),
-            ("BTCUSDT", "sell", 0.002, btc_price - 300, "2024-01-17 15:30:00", 400.0, "completed"),
-            ("BTCUSDT", "buy", 0.0012, btc_price - 100, "2024-01-18 08:45:00", 0, "completed")
+            ("2024-01-15 10:30:00", "BTCUSDT", "15m", "BUY", "open_long", 0.001, btc_price - 2000, btc_price - 2500, btc_price - 1500, "HIGH", "测试开多"),
+            ("2024-01-15 14:20:00", "BTCUSDT", "15m", "SELL", "close_long", 0.001, btc_price - 1500, None, None, "HIGH", "测试平多-盈利"),
+            ("2024-01-16 09:15:00", "BTCUSDT", "15m", "SELL", "open_short", 0.0015, btc_price - 1000, btc_price - 500, btc_price - 1500, "MEDIUM", "测试开空"),
+            ("2024-01-16 16:45:00", "BTCUSDT", "15m", "BUY", "close_short", 0.0015, btc_price - 800, None, None, "HIGH", "测试平空-亏损"),
+            ("2024-01-17 11:00:00", "BTCUSDT", "15m", "BUY", "open_long", 0.002, btc_price - 500, btc_price - 1000, btc_price, "MEDIUM", "测试开多2"),
+            ("2024-01-17 15:30:00", "BTCUSDT", "15m", "SELL", "close_long", 0.002, btc_price - 300, None, None, "HIGH", "测试平多2-盈利"),
+            ("2024-01-18 08:45:00", "BTCUSDT", "15m", "BUY", "open_long", 0.0012, btc_price - 100, btc_price - 600, btc_price + 400, "LOW", "测试开多3")
         ]
         
         for trade in trades_data:
             cursor.execute(
-                "INSERT INTO trades (symbol, side, amount, price, timestamp, profit_loss, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO trades (timestamp, symbol, timeframe, signal, action, amount, price, stop_loss, take_profit, confidence, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 trade
             )
         

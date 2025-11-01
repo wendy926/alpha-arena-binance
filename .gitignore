@@ -207,9 +207,7 @@ Pipfile.lock
 
 # 临时测试脚本
 test_*.py
-check_*.py
 debug_*.py
-fix_*.sh
 
 # Node.js (如果有前端构建工具)
 node_modules/

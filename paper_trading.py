@@ -17,7 +17,7 @@ MYSQL_USER = os.getenv('MYSQL_USER', 'alpha')
 MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD', '')
 MYSQL_DB = os.getenv('MYSQL_DB', 'alpha_arena')
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'paper_trades.db')
+DB_PATH = os.path.join(os.path.dirname(__file__), 'data', 'paper_trades.db')
 
 
 def _get_db_conn():
@@ -200,7 +200,10 @@ def get_all_trades():
 
 def compute_win_rate_from_db():
     """基于数据库记录计算胜率、总交易次数与总利润。
-    规则：以 close_* 为一次交易的结束；与最近 open_* 配对计算盈亏。
+    规则：
+    - total_trades: 计算所有有效的交易操作次数（开仓+平仓）
+    - win_rate: 基于已完成的交易对计算胜率
+    - total_profit: 基于已完成的交易对计算总盈亏
     """
     trades = get_all_trades()
     if not trades:
@@ -210,7 +213,8 @@ def compute_win_rate_from_db():
     entry_price = None
     size = 0.0
     wins = 0
-    total = 0
+    completed_trades = 0  # 已完成的交易对数
+    total_operations = 0  # 所有交易操作次数
     total_profit = 0.0
 
     for t in trades:
@@ -236,6 +240,11 @@ def compute_win_rate_from_db():
         except (ValueError, TypeError):
             print(f"⚠️ 跳过无法转换的记录: action={action}, price={raw_price}, amount={raw_amount}")
             continue
+        
+        # 计算所有有效的交易操作次数
+        if action in ('open_long', 'open_short', 'close_long', 'close_short'):
+            total_operations += 1
+        
         if action in ('open_long', 'open_short'):
             current_side = 'long' if action == 'open_long' else 'short'
             entry_price = price
@@ -247,7 +256,7 @@ def compute_win_rate_from_db():
             else:
                 pnl = (entry_price - price) * size
             total_profit += pnl
-            total += 1
+            completed_trades += 1
             if pnl > 0:
                 wins += 1
             # 重置仓位
@@ -255,6 +264,6 @@ def compute_win_rate_from_db():
             entry_price = None
             size = 0.0
 
-    win_rate = (wins / total * 100.0) if total else 0.0  # 转换为百分比
-    print(f"📊 胜率计算结果: {wins}/{total} = {win_rate:.1f}%, 总盈亏: ${total_profit:.2f}")
-    return {'win_rate': win_rate, 'total_trades': total, 'total_profit': total_profit}
+    win_rate = (wins / completed_trades * 100.0) if completed_trades else 0.0  # 转换为百分比
+    print(f"📊 胜率计算结果: {wins}/{completed_trades} = {win_rate:.1f}%, 总操作次数: {total_operations}, 总盈亏: ${total_profit:.2f}")
+    return {'win_rate': win_rate, 'total_trades': total_operations, 'total_profit': total_profit}

@@ -79,7 +79,7 @@ TRADE_CONFIG = {
     'amount': 0.01,  # 交易数量 (BTC)
     'leverage': 10,  # 杠杆倍数
     'timeframe': '15m',  # 使用15分钟K线
-    'test_mode': True,  # 测试模式
+    'test_mode': False,  # 测试模式
     'data_points': 96,  # 24小时数据（96根15分钟K线）
     'analysis_periods': {
         'short_term': 20,  # 短期均线
@@ -1032,7 +1032,7 @@ def compute_win_rate_from_history():
                     # 平空仓：入场价 - 出场价
                     pnl = (current_open['entry_price'] - price) * current_open['amount']
                     total += 1
-                    if pnl > 0:
+                    if pnl >= 0:
                         wins += 1
                     # 反转后开多
                     current_open = {'side': 'long', 'entry_price': price, 'amount': amount}
@@ -1046,7 +1046,7 @@ def compute_win_rate_from_history():
                     # 平多仓：出场价 - 入场价
                     pnl = (price - current_open['entry_price']) * current_open['amount']
                     total += 1
-                    if pnl > 0:
+                    if pnl >= 0:
                         wins += 1
                     # 反转后开空
                     current_open = {'side': 'short', 'entry_price': price, 'amount': amount}
@@ -1058,7 +1058,7 @@ def compute_win_rate_from_history():
                 if current_open and current_open.get('side') == 'long' and price is not None and current_open.get('entry_price') is not None and current_open.get('amount'):
                     pnl = (price - current_open['entry_price']) * current_open['amount']
                     total += 1
-                    if pnl > 0:
+                    if pnl >= 0:
                         wins += 1
                     current_open = None
             elif action == 'close_short':
@@ -1066,7 +1066,7 @@ def compute_win_rate_from_history():
                 if current_open and current_open.get('side') == 'short' and price is not None and current_open.get('entry_price') is not None and current_open.get('amount'):
                     pnl = (current_open['entry_price'] - price) * current_open['amount']
                     total += 1
-                    if pnl > 0:
+                    if pnl >= 0:
                         wins += 1
                     current_open = None
             else:

@@ -73,6 +73,15 @@ else:
 # 初始化 Binance USDT-M 永续合约交易所（延迟创建，避免本地无ccxt时报错）
 exchange = None
 
+# 内存优化配置
+MEMORY_CONFIG = {
+    'ai_decisions_limit': 30,      # 从50减少到30
+    'trade_history_limit': 50,     # 从100减少到50  
+    'profit_curve_limit': 100,     # 从200减少到100
+    'signal_history_limit': 20,    # 从30减少到20
+    'kline_data_points': 48        # 从96减少到48（12小时数据）
+}
+
 # 交易参数配置 - 结合两个版本的优点
 TRADE_CONFIG = {
     'symbol': 'BTC/USDT',  # Binance USDT-M 永续合约符号格式
@@ -80,11 +89,11 @@ TRADE_CONFIG = {
     'leverage': 10,  # 杠杆倍数
     'timeframe': '15m',  # 使用15分钟K线
     'test_mode': False,  # 测试模式
-    'data_points': 96,  # 24小时数据（96根15分钟K线）
+    'data_points': MEMORY_CONFIG['kline_data_points'],  # 优化：12小时数据（48根15分钟K线）
     'analysis_periods': {
-        'short_term': 20,  # 短期均线
-        'medium_term': 50,  # 中期均线
-        'long_term': 96  # 长期趋势
+        'short_term': 10,  # 短期均线（从20减少到10）
+        'medium_term': 20,  # 中期均线（从50减少到20）
+        'long_term': MEMORY_CONFIG['kline_data_points']  # 长期趋势（从96减少到48）
     },
     # 执行门槛与防频繁交易参数
     'min_confidence_for_trade': 'MEDIUM',  # 低于该信心不执行
@@ -1162,7 +1171,7 @@ def check_stop_take_profit(current_price):
             'confidence': 'HIGH',
             'reason': triggered
         })
-        if len(web_data['trade_history']) > 100:
+        if len(web_data['trade_history']) > MEMORY_CONFIG['trade_history_limit']:
             web_data['trade_history'].pop(0)
 
         # 更新胜率统计
@@ -1418,7 +1427,7 @@ def analyze_with_deepseek(price_data):
         # 保存信号到历史记录
         signal_data['timestamp'] = price_data['timestamp']
         signal_history.append(signal_data)
-        if len(signal_history) > 30:
+        if len(signal_history) > MEMORY_CONFIG['signal_history_limit']:
             signal_history.pop(0)
 
         # 信号统计
@@ -1650,7 +1659,7 @@ def execute_trade(signal_data, price_data):
             'reason': signal_data['reason']
         }
         web_data['trade_history'].append(trade_record)
-        if len(web_data['trade_history']) > 100:  # 只保留最近100条
+        if len(web_data['trade_history']) > MEMORY_CONFIG['trade_history_limit']:  # 内存优化：保留最近50条
             web_data['trade_history'].pop(0)
         # 更新胜率统计（基于交易方向反转视为平仓）
         try:
@@ -1792,7 +1801,7 @@ def trading_bot():
         web_data['profit_curve'].append(profit_point)
         
         # 只保留最近200个数据点（约50小时）
-        if len(web_data['profit_curve']) > 200:
+        if len(web_data['profit_curve']) > MEMORY_CONFIG['profit_curve_limit']:
             web_data['profit_curve'].pop(0)
             
     except Exception as e:
@@ -1841,7 +1850,7 @@ def trading_bot():
             'unrealized_pnl': unrealized_pnl
         }
         web_data['profit_curve'].append(profit_point)
-        if len(web_data['profit_curve']) > 200:
+        if len(web_data['profit_curve']) > MEMORY_CONFIG['profit_curve_limit']:
             web_data['profit_curve'].pop(0)
     
     web_data['current_price'] = price_data['price']
@@ -1892,8 +1901,8 @@ def trading_bot():
         'price': price_data['price']
     }
     web_data['ai_decisions'].append(ai_decision)
-    if len(web_data['ai_decisions']) > 50:  # 只保留最近50条
-        web_data['ai_decisions'].pop(0)
+    if len(web_data['ai_decisions']) > MEMORY_CONFIG['ai_decisions_limit']:  # 内存优化：保留最近30条
+            web_data['ai_decisions'].pop(0)
     
     # 更新性能统计
     if web_data['current_position']:

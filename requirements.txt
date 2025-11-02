@@ -8,3 +8,4 @@ urllib3
 flask
 flask-cors
 pymysql
+psutil

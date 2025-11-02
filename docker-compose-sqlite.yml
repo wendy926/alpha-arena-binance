@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  btc-trading-bot-sqlite:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: btc-trading-bot-sqlite
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # 挂载.env文件（必需）
+      - ./.env:/app/.env:ro
+      # 持久化SQLite数据库
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+      - PAPER_TRADING=true
+      - DB_TYPE=sqlite
+    # 资源限制 - SQLite优化版本
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G          # 增加到2G，给应用更多内存空间
+        reservations:
+          cpus: '0.5'
+          memory: 1G          # 保证至少1G内存
+    # 健康检查 - 更宽松的配置
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/dashboard"]
+      interval: 60s           # 增加检查间隔
+      timeout: 15s            # 增加超时时间
+      retries: 5              # 增加重试次数
+      start_period: 60s       # 增加启动等待时间
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

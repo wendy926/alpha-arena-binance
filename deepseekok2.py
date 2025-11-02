@@ -75,13 +75,13 @@ else:
 # 初始化 Binance USDT-M 永续合约交易所（延迟创建，避免本地无ccxt时报错）
 exchange = None
 
-# 内存优化配置
+# 内存优化配置 - 平衡版本（避免过度优化导致容器退出）
 MEMORY_CONFIG = {
-    'ai_decisions_limit': 10,      # 极限优化：从20减少到10
-    'trade_history_limit': 15,     # 极限优化：从30减少到15  
-    'profit_curve_limit': 25,      # 极限优化：从50减少到25
-    'signal_history_limit': 8,     # 极限优化：从15减少到8
-    'kline_data_points': 24        # 极限优化：从36减少到24（6小时数据）
+    'ai_decisions_limit': 20,      # 恢复到合理值：20条决策记录
+    'trade_history_limit': 30,     # 恢复到合理值：30条交易历史
+    'profit_curve_limit': 50,      # 恢复到合理值：50个盈亏点
+    'signal_history_limit': 15,    # 恢复到合理值：15条信号历史
+    'kline_data_points': 36        # 恢复到合理值：36个K线数据点（9小时数据）
 }
 
 # 交易参数配置 - 结合两个版本的优点
@@ -810,10 +810,21 @@ def build_ai_prompt(price_data, last_signal=None, sentiment_data=None, current_p
         position_text = "无持仓"
         pnl_text = ""
 
-    # 组合Prompt（严格的结构与输出要求）
+    # 组合Prompt（严格的结构与输出要求，强调盈亏比）
     prompt = f"""
 [角色]
 你是专业量化交易AI，专注{tf}周期的趋势与风险控制。
+
+[核心原则]
+1. 盈亏比必须≥1.5:1（潜在盈利/潜在亏损≥1.5）
+2. 严格风险管理：宁可错过机会，不可承担过大风险
+3. 趋势持续性优先：避免因单根K线改变整体判断
+4. 反转需多指标共振：至少2~3项技术指标同向确认
+
+[盈亏比计算规则]
+- 多头：盈亏比 = (止盈价-当前价) / (当前价-止损价)
+- 空头：盈亏比 = (当前价-止盈价) / (止损价-当前价)
+- 要求：盈亏比 ≥ 1.5:1，理想情况 ≥ 2:1
 
 [输入数据]
 {kline_text}
@@ -829,18 +840,18 @@ def build_ai_prompt(price_data, last_signal=None, sentiment_data=None, current_p
 - 价格变化: {price_data.get('price_change',0):+.2f}%
 - 当前持仓: {position_text}{pnl_text}
 
-[思考标准]
-1. 趋势持续性优先：避免因单根K线改变整体判断。
-2. 反转需多指标共振：至少2~3项技术指标同向确认再反转。
-3. 情绪仅作辅助：与技术同向增强信心；背离以技术为主。
-4. 风险明确：给出合理止损/止盈，方向与多空逻辑一致。
-5. 防频繁交易：若无明确趋势，输出HOLD。
+[决策标准]
+1. 如果无法找到盈亏比≥1.5:1的合理位置，输出HOLD
+2. 止损位基于技术支撑/阻力位，不是固定百分比
+3. 止盈位基于下一个重要阻力/支撑位
+4. 优先考虑关键价格位，而非对称的百分比
+5. 防频繁交易：若无明确趋势，输出HOLD
 
 [输出格式]
 仅输出一个JSON对象（不含任何额外文字或注释）：
 {{
   "signal": "BUY|SELL|HOLD",
-  "reason": "简要分析理由(趋势、关键位、指标共振)",
+  "reason": "简要分析理由(趋势、关键位、指标共振、盈亏比)",
   "stop_loss": <number>,
   "take_profit": <number>,
   "confidence": "HIGH|MEDIUM|LOW",
@@ -850,9 +861,9 @@ def build_ai_prompt(price_data, last_signal=None, sentiment_data=None, current_p
 }}
 
 [校验规则]
-- 多头：stop_loss < 当前价 < take_profit。
-- 空头：take_profit < 当前价 < stop_loss。
-- HOLD时给出中性理由，止损/止盈可贴近当前价或留空。
+- 多头：stop_loss < 当前价 < take_profit，且盈亏比≥1.5:1
+- 空头：take_profit < 当前价 < stop_loss，且盈亏比≥1.5:1
+- HOLD时给出保守理由，可设置防守性止损止盈
 """
     return prompt
 
@@ -994,6 +1005,46 @@ def safe_json_parse(json_str):
             print(f"JSON解析失败，原始内容: {json_str[:200]}")
             print(f"错误详情: {e}")
             return None
+
+
+def validate_risk_reward(signal_data, current_price, min_ratio=1.5):
+    """验证盈亏比是否符合要求"""
+    if not signal_data or not current_price:
+        return False, "缺少必要数据"
+    
+    signal = signal_data.get('signal', '')
+    stop_loss = signal_data.get('stop_loss', 0)
+    take_profit = signal_data.get('take_profit', 0)
+    
+    if signal == 'HOLD':
+        return True, "HOLD信号无需验证盈亏比"
+    
+    if not stop_loss or not take_profit:
+        return False, "缺少止损或止盈价格"
+    
+    # 计算盈亏比
+    if signal == 'BUY':
+        if stop_loss >= current_price or take_profit <= current_price:
+            return False, "多头信号价格逻辑错误"
+        potential_profit = abs(take_profit - current_price)
+        potential_loss = abs(current_price - stop_loss)
+    elif signal == 'SELL':
+        if take_profit >= current_price or stop_loss <= current_price:
+            return False, "空头信号价格逻辑错误"
+        potential_profit = abs(current_price - take_profit)
+        potential_loss = abs(stop_loss - current_price)
+    else:
+        return False, "未知信号类型"
+    
+    if potential_loss <= 0:
+        return False, "潜在亏损为零或负数"
+    
+    risk_reward = potential_profit / potential_loss
+    
+    if risk_reward < min_ratio:
+        return False, f"盈亏比{risk_reward:.2f}:1低于最低要求{min_ratio}:1"
+    
+    return True, f"盈亏比{risk_reward:.2f}:1符合要求"
 
 
 def to_float(value, default=0.0):
@@ -1235,13 +1286,16 @@ def test_ai_connection():
 
 
 def create_fallback_signal(price_data):
-    """创建备用交易信号"""
+    """创建备用交易信号，确保盈亏比≥1.5:1"""
     return {
         "signal": "HOLD",
-        "reason": "因技术分析暂时不可用，采取保守策略",
+        "reason": "因技术分析暂时不可用，采取保守策略，盈亏比1.5:1",
         "stop_loss": price_data['price'] * 0.98,  # -2%
-        "take_profit": price_data['price'] * 1.02,  # +2%
+        "take_profit": price_data['price'] * 1.03,  # +3%, 盈亏比1.5:1
         "confidence": "LOW",
+        "strategy_tag": "fallback",
+        "time_horizon": "intraday",
+        "risk_budget": "low",
         "is_fallback": True
     }
 
@@ -1425,6 +1479,26 @@ def analyze_with_deepseek(price_data):
             missing = [f for f in required_fields if f not in signal_data]
             print(f"⚠️ 缺少必需字段: {missing}，使用备用信号")
             signal_data = create_fallback_signal(price_data)
+        
+        # 验证盈亏比
+        current_price = price_data.get('price', 0)
+        is_valid, message = validate_risk_reward(signal_data, current_price)
+        if not is_valid:
+            print(f"⚠️ 盈亏比验证失败: {message}")
+            print("🔄 强制转换为HOLD信号以符合风险管理要求")
+            # 创建优化的HOLD信号，确保盈亏比≥1.5:1
+            signal_data = {
+                'signal': 'HOLD',
+                'reason': f'原信号盈亏比不符合要求({message})，转为保守策略',
+                'stop_loss': current_price * 0.98,  # -2%
+                'take_profit': current_price * 1.03,  # +3%, 盈亏比1.5:1
+                'confidence': 'LOW',
+                'strategy_tag': 'risk_management',
+                'time_horizon': 'intraday',
+                'risk_budget': 'low'
+            }
+        else:
+            print(f"✅ 盈亏比验证通过: {message}")
 
         # 保存信号到历史记录
         signal_data['timestamp'] = price_data['timestamp']
@@ -1767,15 +1841,23 @@ def trading_bot():
         if initial_balance is None:
             initial_balance = current_equity
         
-        # 计算实时总盈亏
-        total_profit = current_equity - initial_balance
+        # 获取历史已实现盈亏（从数据库）
+        try:
+            db_stats = compute_win_rate_from_db()
+            historical_profit = db_stats.get('total_profit', 0.0)
+        except Exception as e:
+            print(f"获取历史盈亏失败: {e}")
+            historical_profit = 0.0
         
         # 获取当前持仓的未实现盈亏
         current_position = get_current_position()
         unrealized_pnl = current_position.get('unrealized_pnl', 0) if current_position else 0
         
-        # 计算实际可用余额（考虑未实现盈亏）
-        adjusted_balance = balance['USDT']['free'] + unrealized_pnl
+        # 计算总盈亏（历史已实现 + 当前未实现）
+        total_profit = historical_profit + unrealized_pnl
+        
+        # 计算调整后的可用余额（起始金额 + 总盈亏）
+        adjusted_balance = initial_balance + total_profit
         adjusted_equity = current_equity + unrealized_pnl
         
         web_data['account_info'] = {
@@ -1815,8 +1897,13 @@ def trading_bot():
         if initial_balance is None:
             initial_balance = current_equity
         
-        # 计算实时总盈亏
-        total_profit = current_equity - initial_balance
+        # 获取历史已实现盈亏（从数据库）
+        try:
+            db_stats = compute_win_rate_from_db()
+            historical_profit = db_stats.get('total_profit', 0.0)
+        except Exception as e:
+            print(f"获取历史盈亏失败: {e}")
+            historical_profit = 0.0
         
         # 获取当前持仓的未实现盈亏
         pos = None
@@ -1825,11 +1912,14 @@ def trading_bot():
         except Exception:
             pos = None
         web_data['current_position'] = pos
-        
+
         unrealized_pnl = pos.get('unrealized_pnl', 0) if pos else 0
         
-        # 计算实际可用余额（考虑未实现盈亏）
-        adjusted_balance = 10000.0 + unrealized_pnl
+        # 计算总盈亏（历史已实现 + 当前未实现）
+        total_profit = historical_profit + unrealized_pnl
+
+        # 计算调整后的可用余额（起始金额 + 总盈亏）
+        adjusted_balance = initial_balance + total_profit
         adjusted_equity = current_equity + unrealized_pnl
         
         web_data['account_info'] = {
@@ -1957,8 +2047,8 @@ def main():
                 
                 print(f"🔍 内存监控 - 当前使用: {memory_mb:.1f}MB")
                 
-                # 如果内存使用超过100MB，执行垃圾回收
-                if memory_mb > 100:
+                # 如果内存使用超过300MB，执行垃圾回收（提高阈值避免过度清理）
+                if memory_mb > 300:
                     print("🧹 执行内存清理...")
                     gc.collect()
                     

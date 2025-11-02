@@ -45,9 +45,6 @@ def get_dashboard_data():
             if deepseekok2.initial_balance is None:
                 deepseekok2.initial_balance = current_equity
             
-            # 计算实时总盈亏
-            total_profit = current_equity - deepseekok2.initial_balance
-            
             # 实时保证持仓有值：优先尝试真实持仓，否则回退到纸上持仓
             pos = deepseekok2.web_data.get('current_position')
             if not pos:
@@ -65,8 +62,19 @@ def get_dashboard_data():
             # 获取未实现盈亏
             unrealized_pnl = pos.get('unrealized_pnl', 0) if pos else 0
             
-            # 计算调整后的余额和总权益
-            adjusted_balance = balance['USDT']['free'] + unrealized_pnl
+            # 计算历史已实现盈亏（从数据库获取）
+            try:
+                stats = compute_win_rate_from_db()
+                historical_profit = stats.get('total_profit', 0.0)
+            except Exception:
+                historical_profit = 0.0
+            
+            # 计算总盈亏（历史交易盈亏 + 当前未实现盈亏）
+            total_profit = historical_profit + unrealized_pnl
+            
+            # 计算调整后的余额和总权益（使用起始金额 + 总盈亏）
+            initial_balance = 10000.0  # 默认起始金额
+            adjusted_balance = initial_balance + total_profit
             adjusted_equity = current_equity + unrealized_pnl
             
             # 更新账户信息
@@ -75,8 +83,9 @@ def get_dashboard_data():
                 'total_equity': current_equity,
                 'adjusted_balance': adjusted_balance,
                 'adjusted_equity': adjusted_equity,
-                'total_profit': total_profit,
-                'unrealized_pnl': unrealized_pnl
+                'historical_profit': historical_profit,  # 历史交易盈亏
+                'total_profit': total_profit,  # 总盈亏（历史 + 未实现）
+                'unrealized_pnl': unrealized_pnl  # 当前持仓未实现盈亏
             }
             
         except Exception as e:
@@ -92,17 +101,14 @@ def get_dashboard_data():
                     'unrealized_pnl': 0.0
                 }
 
-        # 性能回填：使用账户信息中的总盈亏
-        if deepseekok2.web_data.get('account_info', {}).get('total_profit') is not None:
-            deepseekok2.web_data['performance']['total_profit'] = deepseekok2.web_data['account_info']['total_profit']
-
         # 计算胜率与交易次数（基于数据库记录）
         try:
             stats = compute_win_rate_from_db()
             deepseekok2.web_data['performance']['win_rate'] = stats.get('win_rate', 0.0)
             deepseekok2.web_data['performance']['total_trades'] = stats.get('total_trades', 0)
-            deepseekok2.web_data['performance']['total_profit'] = stats.get('total_profit', 0.0)
-            print(f"✅ 胜率计算成功: {stats.get('win_rate', 0.0)}%, 总交易: {stats.get('total_trades', 0)}, 总盈亏: ${stats.get('total_profit', 0.0):.2f}")
+            # 注意：这里的total_profit是历史交易的累计盈亏，不要覆盖account_info中的实时总盈亏
+            deepseekok2.web_data['performance']['historical_profit'] = stats.get('total_profit', 0.0)
+            print(f"✅ 胜率计算成功: {stats.get('win_rate', 0.0)}%, 总交易: {stats.get('total_trades', 0)}, 历史盈亏: ${stats.get('total_profit', 0.0):.2f}")
                 
         except Exception as e_stats:
             print(f"❌ 计算胜率失败: {e_stats}")
@@ -111,7 +117,11 @@ def get_dashboard_data():
             # 使用默认值
             deepseekok2.web_data['performance']['win_rate'] = 0.0
             deepseekok2.web_data['performance']['total_trades'] = 0
-            deepseekok2.web_data['performance']['total_profit'] = 0.0
+            deepseekok2.web_data['performance']['historical_profit'] = 0.0
+
+        # 性能统计：保持account_info中的实时总盈亏不被覆盖
+        # account_info['total_profit'] = 实时总盈亏（已实现 + 未实现）
+        # performance['historical_profit'] = 历史交易累计盈亏（仅来自数据库记录）
 
         data = {
             'account_info': deepseekok2.web_data['account_info'],
@@ -295,9 +305,6 @@ def initialize_data():
                 if deepseekok2.initial_balance is None:
                     deepseekok2.initial_balance = current_equity
                 
-                # 计算实时总盈亏
-                total_profit = current_equity - deepseekok2.initial_balance
-                
                 # 获取当前持仓的未实现盈亏
                 pos = None
                 try:
@@ -312,8 +319,19 @@ def initialize_data():
                 
                 unrealized_pnl = pos.get('unrealized_pnl', 0) if pos else 0
                 
-                # 计算实际可用余额（考虑未实现盈亏）
-                adjusted_balance = balance['USDT']['free'] + unrealized_pnl
+                # 计算历史已实现盈亏（从数据库获取）
+                try:
+                    stats = compute_win_rate_from_db()
+                    historical_profit = stats.get('total_profit', 0.0)
+                except Exception:
+                    historical_profit = 0.0
+                
+                # 计算总盈亏（历史交易盈亏 + 当前未实现盈亏）
+                total_profit = historical_profit + unrealized_pnl
+                
+                # 计算调整后的余额和总权益（使用起始金额 + 总盈亏）
+                initial_balance = 10000.0  # 默认起始金额
+                adjusted_balance = initial_balance + total_profit
                 adjusted_equity = current_equity + unrealized_pnl
                 
                 deepseekok2.web_data['account_info'] = {
@@ -321,8 +339,9 @@ def initialize_data():
                     'total_equity': current_equity,
                     'adjusted_balance': adjusted_balance,
                     'adjusted_equity': adjusted_equity,
-                    'total_profit': total_profit,
-                    'unrealized_pnl': unrealized_pnl
+                    'historical_profit': historical_profit,  # 历史交易盈亏
+                    'total_profit': total_profit,            # 总盈亏（历史+未实现）
+                    'unrealized_pnl': unrealized_pnl         # 未实现盈亏
                 }
             except Exception as e:
                 print(f"获取账户信息失败: {e}")
@@ -333,9 +352,6 @@ def initialize_data():
                 if deepseekok2.initial_balance is None:
                     deepseekok2.initial_balance = current_equity
                 
-                # 计算实时总盈亏
-                total_profit = current_equity - deepseekok2.initial_balance
-                
                 # 获取当前持仓的未实现盈亏
                 pos = None
                 try:
@@ -345,8 +361,19 @@ def initialize_data():
                 
                 unrealized_pnl = pos.get('unrealized_pnl', 0) if pos else 0
                 
-                # 计算实际可用余额（考虑未实现盈亏）
-                adjusted_balance = 10000.0 + unrealized_pnl
+                # 计算历史已实现盈亏（从数据库获取）
+                try:
+                    stats = compute_win_rate_from_db()
+                    historical_profit = stats.get('total_profit', 0.0)
+                except Exception:
+                    historical_profit = 0.0
+                
+                # 计算总盈亏（历史交易盈亏 + 当前未实现盈亏）
+                total_profit = historical_profit + unrealized_pnl
+                
+                # 计算调整后的余额和总权益（使用起始金额 + 总盈亏）
+                initial_balance = 10000.0  # 默认起始金额
+                adjusted_balance = initial_balance + total_profit
                 adjusted_equity = current_equity + unrealized_pnl
                 
                 deepseekok2.web_data['account_info'] = {
@@ -354,8 +381,9 @@ def initialize_data():
                     'total_equity': current_equity,
                     'adjusted_balance': adjusted_balance,
                     'adjusted_equity': adjusted_equity,
-                    'total_profit': total_profit,
-                    'unrealized_pnl': unrealized_pnl
+                    'historical_profit': historical_profit,  # 历史交易盈亏
+                    'total_profit': total_profit,            # 总盈亏（历史+未实现）
+                    'unrealized_pnl': unrealized_pnl         # 未实现盈亏
                 }
             
             # 更新基础数据
